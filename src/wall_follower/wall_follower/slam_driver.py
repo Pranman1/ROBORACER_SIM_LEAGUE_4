@@ -19,8 +19,8 @@ class SlamDriver(Node):
         self.sub_lidar = self.create_subscription(LaserScan, '/autodrive/roboracer_1/lidar', self.lidar_callback, qos)
         
         # Tuning - EXTRA SLOW
-        self.SPEED = 0.10
-        self.CORNER_SPEED = 0.04
+        self.SPEED = 0.20
+        self.CORNER_SPEED = 0.10
         self.MAX_STEER = 0.60
         
         self.prev_steer = 0.0
@@ -67,9 +67,9 @@ class SlamDriver(Node):
         right_dist = np.mean(ranges[max(0,right_idx-10):right_idx]) if right_idx > 10 else 10.0
         
         # Proportional wall avoidance (not full max)
-        if left_dist < 0.8:
+        if left_dist < 0.9:
             steer = max(steer - 0.2, -self.MAX_STEER)  # Add avoidance, don't override
-        if right_dist < 0.8:
+        if right_dist < 0.9:
             steer = min(steer + 0.2, self.MAX_STEER)
         
         # Speed control
