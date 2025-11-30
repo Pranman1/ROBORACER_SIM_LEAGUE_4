@@ -67,10 +67,10 @@ class SlamDriver(Node):
         right_dist = np.mean(ranges[max(0,right_idx-10):right_idx]) if right_idx > 10 else 10.0
         
         # Proportional wall avoidance (not full max)
-        if left_dist < 0.9:
-            steer = max(steer - 0.2, -self.MAX_STEER)  # Add avoidance, don't override
-        if right_dist < 0.9:
-            steer = min(steer + 0.2, self.MAX_STEER)
+        if left_dist < 0.85:
+            steer = max(steer - 0.15, -self.MAX_STEER)  # Add avoidance, don't override
+        if right_dist < 0.85:
+            steer = min(steer + 0.15, self.MAX_STEER)
         
         # Speed control
         speed = self.SPEED
