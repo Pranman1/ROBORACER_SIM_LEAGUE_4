@@ -70,11 +70,11 @@ class RobustDriver(Node):
         left_dist = np.mean(ranges[left_idx:left_idx+10]) if left_idx < num_points-10 else 10.0
         right_dist = np.mean(ranges[max(0,right_idx-10):right_idx]) if right_idx > 10 else 10.0
         
-        # EMERGENCY: If wall very close on one side, steer away
-        if left_dist < 0.6:
+        # EMERGENCY: If wall close on one side, steer away EARLIER
+        if left_dist < 0.75:
             steer = -self.MAX_STEER  # Steer RIGHT
             self.get_logger().warn(f"LEFT WALL CLOSE ({left_dist:.2f}m) - STEERING RIGHT")
-        elif right_dist < 0.6:
+        elif right_dist < 0.75:
             steer = self.MAX_STEER   # Steer LEFT
             self.get_logger().warn(f"RIGHT WALL CLOSE ({right_dist:.2f}m) - STEERING LEFT")
         

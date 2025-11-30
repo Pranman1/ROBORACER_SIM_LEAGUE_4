@@ -28,6 +28,7 @@ setup(
             'mpc_driver = wall_follower.mpc_driver:main',
             'map_follower = wall_follower.map_follower:main',
             'robust_driver = wall_follower.robust_driver:main',
+            'slam_driver = wall_follower.slam_driver:main',
         ],
     },
 )
