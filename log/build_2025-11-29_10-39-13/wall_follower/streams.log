@@ -1,0 +1,37 @@
+[0.465s] Invoking command in '/home/autodrive_devkit/roboracer_ws/src/wall_follower': PYTHONPATH=/home/autodrive_devkit/roboracer_ws/build/wall_follower/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/wall_follower build --build-base /home/autodrive_devkit/roboracer_ws/build/wall_follower/build install --record /home/autodrive_devkit/roboracer_ws/build/wall_follower/install.log --single-version-externally-managed install_data
+[0.629s] running egg_info
+[0.629s] creating ../../build/wall_follower/wall_follower.egg-info
+[0.630s] writing ../../build/wall_follower/wall_follower.egg-info/PKG-INFO
+[0.630s] writing dependency_links to ../../build/wall_follower/wall_follower.egg-info/dependency_links.txt
+[0.630s] writing entry points to ../../build/wall_follower/wall_follower.egg-info/entry_points.txt
+[0.630s] writing requirements to ../../build/wall_follower/wall_follower.egg-info/requires.txt
+[0.630s] writing top-level names to ../../build/wall_follower/wall_follower.egg-info/top_level.txt
+[0.630s] writing manifest file '../../build/wall_follower/wall_follower.egg-info/SOURCES.txt'
+[0.632s] reading manifest file '../../build/wall_follower/wall_follower.egg-info/SOURCES.txt'
+[0.632s] writing manifest file '../../build/wall_follower/wall_follower.egg-info/SOURCES.txt'
+[0.633s] running build
+[0.633s] running build_py
+[0.633s] creating /home/autodrive_devkit/roboracer_ws/build/wall_follower/build
+[0.633s] creating /home/autodrive_devkit/roboracer_ws/build/wall_follower/build/lib
+[0.633s] creating /home/autodrive_devkit/roboracer_ws/build/wall_follower/build/lib/wall_follower
+[0.633s] copying wall_follower/__init__.py -> /home/autodrive_devkit/roboracer_ws/build/wall_follower/build/lib/wall_follower
+[0.633s] copying wall_follower/simple_driver.py -> /home/autodrive_devkit/roboracer_ws/build/wall_follower/build/lib/wall_follower
+[0.633s] running install
+[0.633s] running install_lib
+[0.634s] creating /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages/wall_follower
+[0.634s] copying /home/autodrive_devkit/roboracer_ws/build/wall_follower/build/lib/wall_follower/__init__.py -> /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages/wall_follower
+[0.634s] copying /home/autodrive_devkit/roboracer_ws/build/wall_follower/build/lib/wall_follower/simple_driver.py -> /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages/wall_follower
+[0.635s] byte-compiling /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages/wall_follower/__init__.py to __init__.cpython-310.pyc
+[0.635s] byte-compiling /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages/wall_follower/simple_driver.py to simple_driver.cpython-310.pyc
+[0.635s] running install_data
+[0.635s] creating /home/autodrive_devkit/roboracer_ws/install/wall_follower/share/ament_index
+[0.636s] creating /home/autodrive_devkit/roboracer_ws/install/wall_follower/share/ament_index/resource_index
+[0.636s] creating /home/autodrive_devkit/roboracer_ws/install/wall_follower/share/ament_index/resource_index/packages
+[0.636s] copying resource/wall_follower -> /home/autodrive_devkit/roboracer_ws/install/wall_follower/share/ament_index/resource_index/packages
+[0.636s] copying package.xml -> /home/autodrive_devkit/roboracer_ws/install/wall_follower/share/wall_follower
+[0.636s] running install_egg_info
+[0.637s] Copying ../../build/wall_follower/wall_follower.egg-info to /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages/wall_follower-0.0.0-py3.10.egg-info
+[0.639s] running install_scripts
+[0.656s] Installing simple_driver script to /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/wall_follower
+[0.656s] writing list of installed files to '/home/autodrive_devkit/roboracer_ws/build/wall_follower/install.log'
+[0.676s] Invoked command in '/home/autodrive_devkit/roboracer_ws/src/wall_follower' returned '0': PYTHONPATH=/home/autodrive_devkit/roboracer_ws/build/wall_follower/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/wall_follower build --build-base /home/autodrive_devkit/roboracer_ws/build/wall_follower/build install --record /home/autodrive_devkit/roboracer_ws/build/wall_follower/install.log --single-version-externally-managed install_data

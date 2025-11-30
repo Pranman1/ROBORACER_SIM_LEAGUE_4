@@ -1,0 +1,3 @@
+[console_scripts]
+simple_driver = wall_follower.simple_driver:main
+
