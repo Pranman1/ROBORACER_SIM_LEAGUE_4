@@ -1,0 +1,85 @@
+# MPC Racing System Configuration
+# Tune these parameters for optimal performance
+
+# ============================================
+# VEHICLE PARAMETERS (from AutoDRIVE specs)
+# ============================================
+vehicle:
+  wheelbase: 0.3240          # m
+  track_width: 0.2360        # m
+  wheel_radius: 0.0590       # m
+  total_mass: 3.906          # kg
+  max_steering_angle: 0.5236 # rad (30 deg)
+  max_steering_rate: 3.2     # rad/s
+  max_speed: 22.88           # m/s (theoretical max)
+
+# ============================================
+# MPC CONTROLLER PARAMETERS
+# ============================================
+mpc:
+  # Horizon and timing
+  prediction_horizon: 20     # N steps
+  dt: 0.05                   # s (20Hz control)
+  
+  # Speed limits (be conservative!)
+  max_racing_speed: 5.0      # m/s (start conservative, increase gradually)
+  min_racing_speed: 1.0      # m/s
+  max_acceleration: 3.0      # m/s^2
+  max_deceleration: -5.0     # m/s^2
+  
+  # Cost weights (tune these for behavior)
+  # Higher Q = more aggressive tracking
+  # Higher R = smoother control
+  weights:
+    position_x: 10.0         # Q_x: lateral tracking
+    position_y: 10.0         # Q_y: longitudinal tracking  
+    heading: 5.0             # Q_psi: orientation tracking
+    velocity: 2.0            # Q_v: speed tracking
+    steering_effort: 50.0    # R_delta: penalize steering
+    accel_effort: 10.0       # R_a: penalize acceleration
+    steering_rate: 100.0     # R_delta_rate: smooth steering
+
+# ============================================
+# LOCAL PLANNER (MAPPING PHASE)
+# ============================================
+local_planner:
+  # Mapping speeds (slow and safe for Lap 1)
+  mapping_speed: 0.25        # m/s (throttle command)
+  corner_speed: 0.15         # m/s
+  max_steer: 0.52            # rad
+  
+  # Occupancy grid
+  map_resolution: 0.05       # m/cell
+  map_size: 600              # cells (30m x 30m)
+  
+  # Gap follower tuning
+  steering_gain: 0.55        # How aggressively to steer
+  smoothing_alpha: 0.65      # Steering filter (0-1, higher = less smoothing)
+  
+  # Wall avoidance
+  wall_threshold: 0.6        # m (when to trigger avoidance)
+  avoidance_strength: 0.2    # How much to steer away
+
+# ============================================
+# GLOBAL PLANNER (RACING LINE)
+# ============================================
+global_planner:
+  # Racing line optimization
+  smoothing_factor: 0.5      # Spline smoothing (0-1)
+  curvature_iterations: 5    # Optimization passes
+  
+  # Velocity profile
+  max_lateral_accel: 8.0     # m/s^2 (for velocity calculation)
+  velocity_cap: 5.0          # m/s (conservative cap)
+  min_velocity: 1.0          # m/s
+
+# ============================================
+# TUNING TIPS
+# ============================================
+# 1. Start with conservative speeds (max_racing_speed: 3.0)
+# 2. Complete 10 laps safely before increasing speed
+# 3. If oscillating: increase steering_rate weight
+# 4. If cutting corners: increase position_x/y weights
+# 5. If slow in straights: decrease steering_effort weight
+# 6. If crashing in corners: reduce max_racing_speed
+

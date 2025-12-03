@@ -1,3 +1,8 @@
 [console_scripts]
-simple_driver = wall_follower.simple_driver:main
+disparity_extender = wall_follower.disparity_extender:main
+global_planner = wall_follower.global_planner:main
+local_planner = wall_follower.local_planner:main
+mpc_controller = wall_follower.mpc_controller:main
+slam_driver = wall_follower.slam_driver:main
+tf_broadcaster = wall_follower.tf_broadcaster:main
 

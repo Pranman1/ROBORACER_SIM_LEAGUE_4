@@ -1,3 +1,5 @@
+import os
+from glob import glob
 from setuptools import find_packages, setup
 
 package_name = 'wall_follower'
@@ -10,6 +12,9 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
+        (os.path.join('share', package_name, 'rviz'), glob('rviz/*.rviz')),
+        (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -24,11 +29,12 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'simple_driver = wall_follower.simple_driver:main',
-            'mpc_driver = wall_follower.mpc_driver:main',
-            'map_follower = wall_follower.map_follower:main',
-            'robust_driver = wall_follower.robust_driver:main',
             'slam_driver = wall_follower.slam_driver:main',
+            'local_planner = wall_follower.local_planner:main',
+            'global_planner = wall_follower.global_planner:main',
+            'mpc_controller = wall_follower.mpc_controller:main',
+            'tf_broadcaster = wall_follower.tf_broadcaster:main',
+            'disparity_extender = wall_follower.disparity_extender:main',
         ],
     },
 )
