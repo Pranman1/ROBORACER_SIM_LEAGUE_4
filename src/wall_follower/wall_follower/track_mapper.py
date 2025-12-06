@@ -11,13 +11,25 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Float32, Int32
-from geometry_msgs.msg import Point, PoseStamped
-from nav_msgs.msg import OccupancyGrid, Path
+from geometry_msgs.msg import Point
+from nav_msgs.msg import OccupancyGrid
 import numpy as np
 import time
 import json
 import os
 import subprocess
+from scipy.ndimage import distance_transform_edt, uniform_filter1d
+from skimage import measure
+from skimage.graph import route_through_array
+
+# Try to import matplotlib, but don't fail if it's broken
+try:
+    import matplotlib
+    matplotlib.use('Agg')  # Non-interactive backend
+    import matplotlib.pyplot as plt
+    MATPLOTLIB_AVAILABLE = True
+except:
+    MATPLOTLIB_AVAILABLE = False
 
 class TrackMapper(Node):
     def __init__(self):
@@ -27,7 +39,6 @@ class TrackMapper(Node):
         self.pub_throttle = self.create_publisher(Float32, '/autodrive/roboracer_1/throttle_command', 10)
         self.pub_steering = self.create_publisher(Float32, '/autodrive/roboracer_1/steering_command', 10)
         self.pub_map = self.create_publisher(OccupancyGrid, '/map', 10)
-        self.pub_path = self.create_publisher(Path, '/planned_path', 10)
         
         self.sub_lidar = self.create_subscription(LaserScan, '/autodrive/roboracer_1/lidar', self.lidar_cb, qos)
         self.sub_ips = self.create_subscription(Point, '/autodrive/roboracer_1/ips', self.ips_cb, 10)
@@ -61,9 +72,13 @@ class TrackMapper(Node):
         self.mapping_active = True
         self.stopped = False  # Flag to keep robot stopped after lap 1
         self.current_steer = 0.0
-        self.planned_waypoints = None  # Store waypoints for continuous publishing
         self.start_x, self.start_y = None, None  # Track start position for loop closure
         self.loop_closed = False
+        
+        # ===== PURE PURSUIT =====
+        self.raceline = None  # Will store waypoints after lap 1
+        self.pursuing = False  # Switch from wall follow to pure pursuit
+        self.LOOKAHEAD_DIST = 0.5  # Look 0.5m ahead
         self.RESOLUTION = 0.05
         self.MAP_SIZE = 30.0
         self.grid_size = int(self.MAP_SIZE / self.RESOLUTION)
@@ -72,17 +87,18 @@ class TrackMapper(Node):
         self.grid = np.full((self.grid_size, self.grid_size), -1, dtype=np.int8)
         self.hit_count = np.zeros((self.grid_size, self.grid_size), dtype=np.int32)
         self.miss_count = np.zeros((self.grid_size, self.grid_size), dtype=np.int32)
-        self.HIT_THRESHOLD = 3
-        self.MISS_THRESHOLD = 5
+        self.HIT_THRESHOLD = 6  # Need 6 hits - very confident!
+        self.MISS_THRESHOLD = 10  # Need 10 misses - very confident!
+        self.current_speed = 0.0
         
         self.create_timer(0.3, self.check_stuck)
         self.create_timer(1.0, self.publish_map)
-        self.create_timer(0.5, self.publish_path_timer)  # Publish path continuously
         
         self.launch_rviz()
         
         self.get_logger().info("="*50)
-        self.get_logger().info("TRACK MAPPER - Loop Closure + STOP")
+        self.get_logger().info("TRACK MAPPER - IMPROVED MAPPING")
+        self.get_logger().info("Maps ONLY when driving straight at good speed")
         self.get_logger().info("="*50)
 
     def launch_rviz(self):
@@ -100,13 +116,6 @@ Visualization Manager:
         Value: /map
       Color Scheme: map
       Alpha: 0.7
-      Value: true
-    - Class: rviz_default_plugins/Path
-      Name: Planned Path
-      Topic:
-        Value: /planned_path
-      Color: 0; 255; 0
-      Line Width: 0.1
       Value: true
   Global Options:
     Fixed Frame: map
@@ -152,7 +161,7 @@ Visualization Manager:
         return points
 
     def update_map(self, ranges, angle_min, angle_inc):
-        """Update map - skip during turns/reversing!"""
+        """Update map - ONLY when driving straight!"""
         if not self.mapping_active:
             return
         
@@ -160,8 +169,16 @@ Visualization Manager:
         if time.time() - self.start_time < self.STARTUP_DELAY + 2.0:
             return
         
-        # Skip during reversing or sharp turns (KEY FIX!)
-        if self.reversing or abs(self.current_steer) > 0.35:
+        # ONLY map when going relatively straight and at good speed
+        if self.reversing:
+            return
+        
+        # Lower threshold - skip even moderate turns
+        if abs(self.current_steer) > 0.25:
+            return
+        
+        # Skip if going too slow (might be stuck/maneuvering)
+        if self.current_speed < 0.025:
             return
             
         robot_gx, robot_gy = self.world_to_grid(self.x, self.y)
@@ -169,10 +186,11 @@ Visualization Manager:
         if not (0 <= robot_gx < self.grid_size and 0 <= robot_gy < self.grid_size):
             return
         
-        # Every 3rd ray - good balance
-        for i in range(0, len(ranges), 3):
+        # Every 5th ray - more selective, less noise
+        for i in range(0, len(ranges), 5):
             r = ranges[i]
-            if r < 0.2 or r > 8.0 or not np.isfinite(r):
+            # Stricter filtering
+            if r < 0.25 or r > 7.5 or not np.isfinite(r):
                 continue
             
             ray_angle = angle_min + i * angle_inc + self.yaw
@@ -194,11 +212,16 @@ Visualization Manager:
                         if self.hit_count[gy, gx] < self.HIT_THRESHOLD:
                             self.grid[gy, gx] = 0
             
-            # Mark obstacle
+            # Mark obstacle - THICKER walls!
             if 0 <= hit_gx < self.grid_size and 0 <= hit_gy < self.grid_size:
                 self.hit_count[hit_gy, hit_gx] += 1
                 if self.hit_count[hit_gy, hit_gx] >= self.HIT_THRESHOLD:
-                    self.grid[hit_gy, hit_gx] = 100
+                    # Mark the cell and neighbors to make wall thicker
+                    for dy in [-1, 0, 1]:
+                        for dx in [-1, 0, 1]:
+                            ny, nx = hit_gy + dy, hit_gx + dx
+                            if 0 <= nx < self.grid_size and 0 <= ny < self.grid_size:
+                                self.grid[ny, nx] = 100
 
     def publish_map(self):
         """Publish map to RViz"""
@@ -216,6 +239,83 @@ Visualization Manager:
         
         msg.data = self.grid.flatten().tolist()
         self.pub_map.publish(msg)
+    
+    def cleanup_map(self):
+        """Post-process map: fill wall gaps, thicken walls, fill holes - NO matplotlib!"""
+        try:
+            from scipy.ndimage import binary_closing, binary_dilation, binary_fill_holes, label
+            
+            self.get_logger().info("Cleaning up map...")
+            
+            # Step 0: Remove tiny black spots (noise smaller than real walls)
+            walls = (self.grid == 100)
+            labeled_walls, num_wall_features = label(walls)
+            
+            min_wall_size = 50
+            for i in range(1, num_wall_features + 1):
+                wall_blob_size = np.sum(labeled_walls == i)
+                if wall_blob_size < min_wall_size:
+                    self.grid[labeled_walls == i] = 0
+            
+            removed_count = num_wall_features - np.sum([np.sum(labeled_walls == i) >= min_wall_size for i in range(1, num_wall_features + 1)])
+            self.get_logger().info(f"✓ Removed {removed_count} tiny black spots")
+            
+            # Step 1: Fill gaps in walls (make walls solid)
+            obstacle_map = (self.grid == 100)
+            kernel = np.ones((9, 9), dtype=bool)
+            obstacles_filled = binary_closing(obstacle_map, kernel)
+            # Make walls thicker
+            obstacles_thick = binary_dilation(obstacles_filled, np.ones((4, 4)))
+            self.get_logger().info("✓ Filled wall gaps and made thick")
+            
+            # Step 2: Expand free space into nearby unknown
+            free_space = (self.grid == 0)
+            free_expanded = binary_dilation(free_space, np.ones((11, 11)))
+            free_expanded = free_expanded & ~obstacles_thick
+            self.get_logger().info("✓ Expanded free space")
+            
+            # Step 3: Keep only LARGEST connected component
+            labeled, num_features = label(free_expanded)
+            if num_features > 0:
+                sizes = np.bincount(labeled.ravel())
+                sizes[0] = 0
+                largest_component = sizes.argmax()
+                free_expanded = (labeled == largest_component)
+                self.get_logger().info(f"✓ Kept largest track region (removed {num_features-1} isolated areas)")
+            
+            # Step 4: Fill ALL holes inside free space
+            free_filled = binary_fill_holes(free_expanded)
+            self.get_logger().info("✓ Filled ALL holes surrounded by white")
+            
+            # Step 5: Remove overlap with walls
+            free_final = free_filled & ~obstacles_thick
+            
+            # Step 6: Add THIN perimeter around all white areas
+            from scipy.ndimage import binary_erosion
+            free_inner = binary_erosion(free_final, np.ones((2, 2)))
+            perimeter = free_final & ~free_inner
+            
+            # Combine walls + perimeter
+            walls_final = obstacles_thick | perimeter
+            self.get_logger().info("✓ Added thin perimeter walls")
+            
+            # Final free space (away from walls)
+            free_final = free_final & ~walls_final
+            
+            # Apply to grid
+            self.grid[:] = -1  # Reset to unknown
+            self.grid[free_final] = 0  # Free space
+            self.grid[walls_final] = 100  # Walls
+            
+            free_count = np.sum(self.grid == 0)
+            wall_count = np.sum(self.grid == 100)
+            
+            self.get_logger().info(f"✅ Cleanup done! Free: {free_count}, Walls: {wall_count}")
+            
+        except Exception as e:
+            self.get_logger().error(f"Cleanup failed: {e}")
+            import traceback
+            self.get_logger().error(traceback.format_exc())
     
     def save_map(self):
         """Save map to file"""
@@ -246,120 +346,183 @@ Visualization Manager:
         except Exception as e:
             self.get_logger().error(f"Save failed: {e}")
     
-    def compute_centerline(self):
-        """Compute racing line from map"""
+    def generate_raceline(self):
+        """Generate racing line from cleaned map using quadrant checkpoints"""
         try:
-            from scipy.ndimage import distance_transform_edt, binary_opening, binary_closing
-            from scipy.ndimage import gaussian_filter
+            self.get_logger().info("🏁 Generating raceline...")
             
-            self.get_logger().info("Computing racing line from map...")
+            # Get cost map and checkpoints
+            binary_track = (self.grid == 0)
+            dist_map = distance_transform_edt(binary_track)
             
-            # Heavy cleaning - remove ALL small artifacts
-            obstacle_map = (self.grid == 100).astype(bool)
+            max_dist = np.max(dist_map)
+            cost_map = max_dist - dist_map
+            cost_map[self.grid != 0] = np.inf
             
-            # Opening: removes small objects (like starting artifacts)
-            kernel_large = np.ones((15, 15), dtype=bool)
-            cleaned = binary_opening(obstacle_map, kernel_large)
+            # Find 4 quadrant checkpoints
+            valid_y, valid_x = np.where(dist_map > 0)
+            center_y = np.mean(valid_y)
+            center_x = np.mean(valid_x)
             
-            # Closing: fills small holes
-            cleaned = binary_closing(cleaned, kernel_large)
+            h, w = dist_map.shape
+            y_grid, x_grid = np.ogrid[:h, :w]
+            angles = np.arctan2(y_grid - center_y, x_grid - center_x)
             
-            self.get_logger().info("Map cleaned, computing distance transform...")
+            sectors = [(-np.pi, -np.pi/2), (-np.pi/2, 0), (0, np.pi/2), (np.pi/2, np.pi)]
+            checkpoints = []
             
-            # Free space
-            free_space = ~cleaned
+            for start_ang, end_ang in sectors:
+                angle_mask = (angles >= start_ang) & (angles < end_ang)
+                valid_mask = angle_mask & (dist_map > 0)
+                if np.sum(valid_mask) == 0: continue
+                sector_dist = dist_map.copy()
+                sector_dist[~valid_mask] = -1
+                best_idx = np.argmax(sector_dist)
+                checkpoints.append(np.unravel_index(best_idx, dist_map.shape))
             
-            # Distance transform - find centerline
-            dist_map = distance_transform_edt(free_space)
+            # Route through checkpoints
+            full_path = []
+            num_points = len(checkpoints)
+            for i in range(num_points):
+                start = checkpoints[i]
+                end = checkpoints[(i + 1) % num_points]
+                indices, _ = route_through_array(cost_map, start, end, fully_connected=True, geometric=True)
+                segment = np.array(indices)
+                if i > 0:
+                    full_path.append(segment[1:])
+                else:
+                    full_path.append(segment)
             
-            # Find ridge of distance map (centerline)
-            # Use points that are local maxima in distance
-            smoothed_dist = gaussian_filter(dist_map.astype(float), sigma=2)
-            
-            # Get points with high distance from walls
-            threshold = np.percentile(smoothed_dist[smoothed_dist > 0], 80)
-            centerline_mask = smoothed_dist > threshold
-            
-            cy, cx = np.where(centerline_mask)
-            
-            if len(cx) < 20:
-                self.get_logger().error(f"Only {len(cx)} centerline points!")
-                return None
-            
-            self.get_logger().info(f"Found {len(cx)} centerline points")
+            path_pixels = np.vstack(full_path)
             
             # Convert to world coordinates
-            wx = self.grid_origin_x + cx * self.RESOLUTION
-            wy = self.grid_origin_y + cy * self.RESOLUTION
+            py = path_pixels[:, 0]
+            px = path_pixels[:, 1]
+            wx = (px * self.RESOLUTION) + self.grid_origin_x
+            wy = (py * self.RESOLUTION) + self.grid_origin_y
             
-            # Sort by angle from start to create loop
-            angles = np.arctan2(wy - self.start_y, wx - self.start_x)
-            sorted_idx = np.argsort(angles)
-            wx = wx[sorted_idx]
-            wy = wy[sorted_idx]
+            # Smooth
+            window = 20
+            wx = uniform_filter1d(wx, size=window, mode='wrap')
+            wy = uniform_filter1d(wy, size=window, mode='wrap')
             
-            # Smooth the path with moving average
-            window = 5
-            wx_smooth = np.convolve(wx, np.ones(window)/window, mode='valid')
-            wy_smooth = np.convolve(wy, np.ones(window)/window, mode='valid')
+            # Resample to 200 points
+            path_world = np.column_stack((wx, wy))
+            self.raceline = self.resample_path(path_world, 200)
             
-            # Subsample to ~80 waypoints
-            num_waypoints = 80
-            step = max(1, len(wx_smooth) // num_waypoints)
-            waypoints = [[float(wx_smooth[i]), float(wy_smooth[i])] 
-                        for i in range(0, len(wx_smooth), step)]
+            self.get_logger().info(f"✅ Raceline generated: {len(self.raceline)} waypoints")
             
-            # Close the loop - add first point at end
-            if len(waypoints) > 0:
-                waypoints.append(waypoints[0])
+            # Visualize and save
+            self.visualize_raceline(path_pixels, checkpoints)
             
-            self.get_logger().info(f"✅ Computed {len(waypoints)} smooth waypoints")
+            return True
             
-            # Save to file
-            map_dir = os.getcwd()
-            path_file = os.path.join(map_dir, 'centerline.json')
-            data = {
-                'waypoints': waypoints,
-                'num_waypoints': len(waypoints)
-            }
-            with open(path_file, 'w') as f:
-                json.dump(data, f, indent=2)
-            
-            self.get_logger().info(f"💾 Saved to: {path_file}")
-            
-            return waypoints
-            
-        except ImportError as e:
-            self.get_logger().error(f"Missing library: {e}")
-            self.get_logger().error("Run: pip install scipy")
-            return None
         except Exception as e:
-            self.get_logger().error(f"Centerline failed: {e}")
+            self.get_logger().error(f"Raceline generation failed: {e}")
             import traceback
             self.get_logger().error(traceback.format_exc())
-            return None
+            return False
     
-    def publish_path_timer(self):
-        """Timer callback to continuously publish path"""
-        if self.planned_waypoints is None or len(self.planned_waypoints) == 0:
+    def resample_path(self, path, num_points=200):
+        """Interpolate path to have exactly num_points evenly spaced"""
+        dists = np.sqrt(np.sum(np.diff(path, axis=0)**2, axis=1))
+        cumulative_dist = np.r_[0, np.cumsum(dists)]
+        total_dist = cumulative_dist[-1]
+        
+        new_dists = np.linspace(0, total_dist, num_points)
+        
+        x_new = np.interp(new_dists, cumulative_dist, path[:,0])
+        y_new = np.interp(new_dists, cumulative_dist, path[:,1])
+        
+        return np.column_stack((x_new, y_new))
+    
+    def visualize_raceline(self, path_pixels, checkpoints):
+        """Visualize and save raceline on map"""
+        if not MATPLOTLIB_AVAILABLE:
+            self.get_logger().info("⚠️  Matplotlib not available, skipping visualization")
+            self.get_logger().info("   Run centerline_skeleton.py separately to visualize")
             return
         
-        msg = Path()
-        msg.header.frame_id = "map"
-        msg.header.stamp = self.get_clock().now().to_msg()
+        try:
+            self.get_logger().info("📊 Saving raceline visualization...")
+            
+            fig, ax = plt.subplots(1, 1, figsize=(12, 12))
+            
+            # Show map
+            ax.imshow(self.grid, cmap='gray', origin='lower')
+            
+            # Plot path
+            py = path_pixels[:, 0]
+            px = path_pixels[:, 1]
+            ax.plot(px, py, 'g-', linewidth=3, label='Racing Line', alpha=0.8)
+            
+            # Plot checkpoints
+            for i, (cy, cx) in enumerate(checkpoints):
+                colors = ['red', 'cyan', 'yellow', 'orange']
+                ax.scatter(cx, cy, c=colors[i % 4], s=200, marker='*', 
+                          edgecolors='black', linewidths=2, zorder=10,
+                          label=f'Checkpoint {i+1}')
+            
+            # Plot start point
+            ax.scatter(px[0], py[0], c='lime', s=300, marker='o', 
+                      edgecolors='darkgreen', linewidths=3, zorder=11,
+                      label='Start')
+            
+            ax.set_title("Generated Racing Line", fontsize=16, fontweight='bold')
+            ax.legend(loc='upper right', fontsize=10)
+            ax.grid(True, alpha=0.3)
+            
+            # Save
+            save_path = os.path.join(os.getcwd(), 'raceline_map.png')
+            plt.savefig(save_path, dpi=150, bbox_inches='tight')
+            plt.close()
+            
+            self.get_logger().info(f"💾 Saved visualization: {save_path}")
+            
+            # Open automatically
+            try:
+                subprocess.Popen(['xdg-open', save_path])
+                self.get_logger().info("🖼️  Opening visualization automatically...")
+            except:
+                self.get_logger().info("   Open this file to see your racing line!")
+            
+        except Exception as e:
+            self.get_logger().warn(f"Visualization failed: {e}")
+    
+    def pure_pursuit(self, ranges, n, center):
+        """Pure pursuit controller - follow the raceline"""
+        if self.raceline is None or len(self.raceline) == 0:
+            self.get_logger().warn("No raceline!")
+            return 0.0, 0.0
         
-        for wp in self.planned_waypoints:
-            pose = PoseStamped()
-            pose.header = msg.header
-            pose.pose.position.x = float(wp[0])
-            pose.pose.position.y = float(wp[1])
-            pose.pose.position.z = 0.0
-            pose.pose.orientation.w = 1.0
-            msg.poses.append(pose)
+        # Find closest point on raceline
+        current_pos = np.array([self.x, self.y])
+        distances = np.linalg.norm(self.raceline - current_pos, axis=1)
+        closest_idx = np.argmin(distances)
         
-        self.pub_path.publish(msg)
-
-
+        # Look ahead
+        lookahead_idx = (closest_idx + 10) % len(self.raceline)  # Look 10 points ahead
+        target = self.raceline[lookahead_idx]
+        
+        # Calculate steering angle
+        dx = target[0] - self.x
+        dy = target[1] - self.y
+        target_angle = np.arctan2(dy, dx)
+        
+        angle_diff = target_angle - self.yaw
+        # Normalize to [-pi, pi]
+        while angle_diff > np.pi:
+            angle_diff -= 2 * np.pi
+        while angle_diff < -np.pi:
+            angle_diff += 2 * np.pi
+        
+        steer = np.clip(angle_diff * 2.0, -self.MAX_STEER, self.MAX_STEER)
+        
+        # Speed based on steering
+        speed = self.SPEED * (1.0 - abs(steer) / self.MAX_STEER * 0.5)
+        
+        return speed, steer
+    
     def check_stuck(self):
         if self.reversing:
             return
@@ -448,6 +611,12 @@ Visualization Manager:
         n = len(ranges)
         center = n // 2
         
+        # PURE PURSUIT MODE - Follow raceline!
+        if self.pursuing:
+            speed, steer = self.pure_pursuit(ranges, n, center)
+            self.publish(speed, steer)
+            return
+        
         # Update map (doesn't affect controls!)
         self.update_map(ranges, msg.angle_min, msg.angle_increment)
         
@@ -463,17 +632,19 @@ Visualization Manager:
                 self.get_logger().info("🔄 LOOP CLOSED! Stopping...")
                 self.publish(0.0, 0.0)
                 
+                self.get_logger().info("🧹 Cleaning up map...")
+                self.cleanup_map()
+                
                 self.get_logger().info("💾 Saving map...")
                 self.save_map()
                 
-                self.get_logger().info("🧮 Computing racing line...")
-                waypoints = self.compute_centerline()
-                
-                if waypoints:
-                    self.planned_waypoints = waypoints
-                    self.get_logger().info("🎯 Racing line computed!")
-                
-                self.get_logger().info("✅ DONE! Check RViz for green racing line")
+                self.get_logger().info("🏁 Generating raceline...")
+                if self.generate_raceline():
+                    self.pursuing = True
+                    self.stopped = False
+                    self.get_logger().info("✅ Switching to PURE PURSUIT mode!")
+                else:
+                    self.get_logger().error("❌ Failed to generate raceline, staying stopped")
                 return
         
         # Get distances
@@ -543,12 +714,17 @@ Visualization Manager:
             map_str = ""
             if self.mapping_active:
                 occupied = np.sum(self.grid == 100)
+                free_count = np.sum(self.grid == 0)
                 skip = ""
                 if self.reversing:
                     skip = " [SKIP: rev]"
-                elif abs(steer) > 0.35:
+                elif abs(steer) > 0.25:
                     skip = " [SKIP: turn]"
-                map_str = f" [MAP: {occupied} walls{skip}]"
+                elif speed < 0.025:
+                    skip = " [SKIP: slow]"
+                else:
+                    skip = " [MAPPING]"
+                map_str = f" [W:{occupied} F:{free_count}{skip}]"
             self.get_logger().info(f"R:{d_right:.2f} F:{d_front:.2f} err:{error:.2f} st:{steer:.2f}{map_str}")
 
     def publish(self, speed, steer):
@@ -557,6 +733,7 @@ Visualization Manager:
         self.pub_throttle.publish(t)
         self.pub_steering.publish(s)
         self.current_steer = float(steer)  # Track for mapping
+        self.current_speed = float(speed)  # Track for mapping
 
 
 def main(args=None):
