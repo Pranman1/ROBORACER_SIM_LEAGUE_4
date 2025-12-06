@@ -1,8 +1,13 @@
 [console_scripts]
 disparity_extender = wall_follower.disparity_extender:main
+ftg_driver = wall_follower.ftg_driver:main
 global_planner = wall_follower.global_planner:main
 local_planner = wall_follower.local_planner:main
+map_driver = wall_follower.map_driver:main
 mpc_controller = wall_follower.mpc_controller:main
+path_racer = wall_follower.path_racer:main
+rw_follower = wall_follower.rw_follower:main
 slam_driver = wall_follower.slam_driver:main
 tf_broadcaster = wall_follower.tf_broadcaster:main
+track_mapper = wall_follower.track_mapper:main
 

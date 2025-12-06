@@ -35,6 +35,11 @@ setup(
             'mpc_controller = wall_follower.mpc_controller:main',
             'tf_broadcaster = wall_follower.tf_broadcaster:main',
             'disparity_extender = wall_follower.disparity_extender:main',
+            'ftg_driver = wall_follower.ftg_driver:main',
+            'rw_follower = wall_follower.rw_follower:main',
+            'map_driver = wall_follower.map_driver:main',
+            'track_mapper = wall_follower.track_mapper:main',
+            'path_racer = wall_follower.path_racer:main',
         ],
     },
 )

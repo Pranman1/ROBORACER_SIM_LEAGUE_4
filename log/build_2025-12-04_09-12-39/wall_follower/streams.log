@@ -1,0 +1,72 @@
+[0.366s] Invoking command in '/home/autodrive_devkit/roboracer_ws/src/wall_follower': PYTHONPATH=/home/autodrive_devkit/roboracer_ws/build/wall_follower/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/wall_follower build --build-base /home/autodrive_devkit/roboracer_ws/build/wall_follower/build install --record /home/autodrive_devkit/roboracer_ws/build/wall_follower/install.log --single-version-externally-managed install_data
+[0.521s] running egg_info
+[0.522s] creating ../../build/wall_follower/wall_follower.egg-info
+[0.522s] writing ../../build/wall_follower/wall_follower.egg-info/PKG-INFO
+[0.522s] writing dependency_links to ../../build/wall_follower/wall_follower.egg-info/dependency_links.txt
+[0.522s] writing entry points to ../../build/wall_follower/wall_follower.egg-info/entry_points.txt
+[0.522s] writing requirements to ../../build/wall_follower/wall_follower.egg-info/requires.txt
+[0.522s] writing top-level names to ../../build/wall_follower/wall_follower.egg-info/top_level.txt
+[0.522s] writing manifest file '../../build/wall_follower/wall_follower.egg-info/SOURCES.txt'
+[0.523s] reading manifest file '../../build/wall_follower/wall_follower.egg-info/SOURCES.txt'
+[0.524s] writing manifest file '../../build/wall_follower/wall_follower.egg-info/SOURCES.txt'
+[0.524s] running build
+[0.524s] running build_py
+[0.524s] creating /home/autodrive_devkit/roboracer_ws/build/wall_follower/build
+[0.524s] creating /home/autodrive_devkit/roboracer_ws/build/wall_follower/build/lib
+[0.524s] creating /home/autodrive_devkit/roboracer_ws/build/wall_follower/build/lib/wall_follower
+[0.524s] copying wall_follower/tf_broadcaster.py -> /home/autodrive_devkit/roboracer_ws/build/wall_follower/build/lib/wall_follower
+[0.524s] copying wall_follower/global_planner.py -> /home/autodrive_devkit/roboracer_ws/build/wall_follower/build/lib/wall_follower
+[0.524s] copying wall_follower/__init__.py -> /home/autodrive_devkit/roboracer_ws/build/wall_follower/build/lib/wall_follower
+[0.524s] copying wall_follower/slam_driver.py -> /home/autodrive_devkit/roboracer_ws/build/wall_follower/build/lib/wall_follower
+[0.524s] copying wall_follower/mpc_controller.py -> /home/autodrive_devkit/roboracer_ws/build/wall_follower/build/lib/wall_follower
+[0.525s] copying wall_follower/local_planner.py -> /home/autodrive_devkit/roboracer_ws/build/wall_follower/build/lib/wall_follower
+[0.525s] copying wall_follower/ftg_driver.py -> /home/autodrive_devkit/roboracer_ws/build/wall_follower/build/lib/wall_follower
+[0.525s] copying wall_follower/rw_follower.py -> /home/autodrive_devkit/roboracer_ws/build/wall_follower/build/lib/wall_follower
+[0.525s] copying wall_follower/disparity_extender.py -> /home/autodrive_devkit/roboracer_ws/build/wall_follower/build/lib/wall_follower
+[0.525s] running install
+[0.525s] running install_lib
+[0.525s] creating /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages/wall_follower
+[0.525s] copying /home/autodrive_devkit/roboracer_ws/build/wall_follower/build/lib/wall_follower/tf_broadcaster.py -> /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages/wall_follower
+[0.525s] copying /home/autodrive_devkit/roboracer_ws/build/wall_follower/build/lib/wall_follower/global_planner.py -> /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages/wall_follower
+[0.525s] copying /home/autodrive_devkit/roboracer_ws/build/wall_follower/build/lib/wall_follower/__init__.py -> /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages/wall_follower
+[0.525s] copying /home/autodrive_devkit/roboracer_ws/build/wall_follower/build/lib/wall_follower/slam_driver.py -> /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages/wall_follower
+[0.525s] copying /home/autodrive_devkit/roboracer_ws/build/wall_follower/build/lib/wall_follower/mpc_controller.py -> /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages/wall_follower
+[0.525s] copying /home/autodrive_devkit/roboracer_ws/build/wall_follower/build/lib/wall_follower/local_planner.py -> /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages/wall_follower
+[0.525s] copying /home/autodrive_devkit/roboracer_ws/build/wall_follower/build/lib/wall_follower/ftg_driver.py -> /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages/wall_follower
+[0.525s] copying /home/autodrive_devkit/roboracer_ws/build/wall_follower/build/lib/wall_follower/rw_follower.py -> /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages/wall_follower
+[0.525s] copying /home/autodrive_devkit/roboracer_ws/build/wall_follower/build/lib/wall_follower/disparity_extender.py -> /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages/wall_follower
+[0.525s] byte-compiling /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages/wall_follower/tf_broadcaster.py to tf_broadcaster.cpython-310.pyc
+[0.526s] byte-compiling /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages/wall_follower/global_planner.py to global_planner.cpython-310.pyc
+[0.527s] byte-compiling /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages/wall_follower/__init__.py to __init__.cpython-310.pyc
+[0.527s] byte-compiling /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages/wall_follower/slam_driver.py to slam_driver.cpython-310.pyc
+[0.527s] byte-compiling /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages/wall_follower/mpc_controller.py to mpc_controller.cpython-310.pyc
+[0.529s] byte-compiling /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages/wall_follower/local_planner.py to local_planner.cpython-310.pyc
+[0.529s] byte-compiling /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages/wall_follower/ftg_driver.py to ftg_driver.cpython-310.pyc
+[0.530s] byte-compiling /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages/wall_follower/rw_follower.py to rw_follower.cpython-310.pyc
+[0.530s] byte-compiling /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages/wall_follower/disparity_extender.py to disparity_extender.cpython-310.pyc
+[0.531s] running install_data
+[0.531s] creating /home/autodrive_devkit/roboracer_ws/install/wall_follower/share/ament_index
+[0.531s] creating /home/autodrive_devkit/roboracer_ws/install/wall_follower/share/ament_index/resource_index
+[0.531s] creating /home/autodrive_devkit/roboracer_ws/install/wall_follower/share/ament_index/resource_index/packages
+[0.531s] copying resource/wall_follower -> /home/autodrive_devkit/roboracer_ws/install/wall_follower/share/ament_index/resource_index/packages
+[0.531s] copying package.xml -> /home/autodrive_devkit/roboracer_ws/install/wall_follower/share/wall_follower
+[0.532s] creating /home/autodrive_devkit/roboracer_ws/install/wall_follower/share/wall_follower/launch
+[0.532s] copying launch/racing.launch.py -> /home/autodrive_devkit/roboracer_ws/install/wall_follower/share/wall_follower/launch
+[0.532s] creating /home/autodrive_devkit/roboracer_ws/install/wall_follower/share/wall_follower/rviz
+[0.532s] copying rviz/racing.rviz -> /home/autodrive_devkit/roboracer_ws/install/wall_follower/share/wall_follower/rviz
+[0.532s] creating /home/autodrive_devkit/roboracer_ws/install/wall_follower/share/wall_follower/config
+[0.532s] copying config/slam_params.yaml -> /home/autodrive_devkit/roboracer_ws/install/wall_follower/share/wall_follower/config
+[0.532s] copying config/mpc_params.yaml -> /home/autodrive_devkit/roboracer_ws/install/wall_follower/share/wall_follower/config
+[0.532s] running install_egg_info
+[0.533s] Copying ../../build/wall_follower/wall_follower.egg-info to /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages/wall_follower-0.0.0-py3.10.egg-info
+[0.533s] running install_scripts
+[0.551s] Installing disparity_extender script to /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/wall_follower
+[0.551s] Installing ftg_driver script to /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/wall_follower
+[0.551s] Installing global_planner script to /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/wall_follower
+[0.552s] Installing local_planner script to /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/wall_follower
+[0.552s] Installing mpc_controller script to /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/wall_follower
+[0.552s] Installing rw_follower script to /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/wall_follower
+[0.552s] Installing slam_driver script to /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/wall_follower
+[0.552s] Installing tf_broadcaster script to /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/wall_follower
+[0.552s] writing list of installed files to '/home/autodrive_devkit/roboracer_ws/build/wall_follower/install.log'
+[0.567s] Invoked command in '/home/autodrive_devkit/roboracer_ws/src/wall_follower' returned '0': PYTHONPATH=/home/autodrive_devkit/roboracer_ws/build/wall_follower/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/wall_follower build --build-base /home/autodrive_devkit/roboracer_ws/build/wall_follower/build install --record /home/autodrive_devkit/roboracer_ws/build/wall_follower/install.log --single-version-externally-managed install_data
