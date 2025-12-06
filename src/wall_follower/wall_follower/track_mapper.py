@@ -1,11 +1,9 @@
 """
-PURE RIGHT WALL FOLLOWER - Simplest possible
-- Just stay 0.6m from right wall
-- Follow it around the track
-- No gap detection, no convexity
-- Just PID wall following
-
-If this doesn't work, we try MPC with a recorded path.
+PURE RIGHT WALL FOLLOWER - CONTINUOUS
+- Right wall following (your tuned params!)
+- No mapping (removed)
+- Runs continuously for multiple laps
+- Test endurance!
 
 RUN: ros2 run wall_follower track_mapper
 """
@@ -14,10 +12,8 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Float32, Int32
-from geometry_msgs.msg import Point, TransformStamped
-from tf2_ros import TransformBroadcaster
+from geometry_msgs.msg import Point
 import numpy as np
-import subprocess
 import time
 
 class TrackMapper(Node):
@@ -27,8 +23,6 @@ class TrackMapper(Node):
         
         self.pub_throttle = self.create_publisher(Float32, '/autodrive/roboracer_1/throttle_command', 10)
         self.pub_steering = self.create_publisher(Float32, '/autodrive/roboracer_1/steering_command', 10)
-        self.pub_scan = self.create_publisher(LaserScan, '/scan', 10)
-        self.tf_broadcaster = TransformBroadcaster(self)
         
         self.sub_lidar = self.create_subscription(LaserScan, '/autodrive/roboracer_1/lidar', self.lidar_cb, qos)
         self.sub_ips = self.create_subscription(Point, '/autodrive/roboracer_1/ips', self.ips_cb, 10)
@@ -37,7 +31,7 @@ class TrackMapper(Node):
         self.x, self.y, self.yaw = 0.0, 0.0, 0.0
         self.prev_x, self.prev_y = 0.0, 0.0
         self.lap = 0
-        self.done = False
+        self.max_lap = 10  # Run for 10 laps!
         
         # Simple PID wall following
         self.TARGET_DIST = 0.8  # Stay 0.6m from right wall
@@ -58,82 +52,126 @@ class TrackMapper(Node):
         self.position_history = []
         self.heading_history = []  # Track heading to prevent 180 turns
         
-        self.create_timer(0.02, self.publish_tf)
         self.create_timer(0.3, self.check_stuck)
-        self.launch_slam()
         
         self.get_logger().info("="*50)
-        self.get_logger().info("PURE RIGHT WALL FOLLOWER")
-        self.get_logger().info("Just follow the right wall. Simple.")
+        self.get_logger().info("ENDURANCE TEST - 10 LAPS")
         self.get_logger().info("="*50)
 
-    def launch_slam(self):
-        config = """
-slam_toolbox:
-  ros__parameters:
-    odom_frame: odom
-    map_frame: map
-    base_frame: base_link
-    scan_topic: /scan
-    mode: mapping
-    resolution: 0.05
-    max_laser_range: 10.0
-    map_update_interval: 1.0
-    use_scan_matching: true
-    minimum_travel_distance: 0.08
-    do_loop_closing: true
-"""
+    def OLD_launch_rviz(self):
+        """Launch RViz to visualize the map"""
         rviz = """
 Visualization Manager:
   Displays:
     - Class: rviz_default_plugins/Grid
       Cell Size: 1
-      Plane Cell Count: 100
+      Plane Cell Count: 50
     - Class: rviz_default_plugins/Map
+      Name: Track Map
       Topic:
         Value: /map
-      Value: true
-    - Class: rviz_default_plugins/LaserScan
-      Topic:
-        Value: /scan
-      Size (m): 0.05
+      Color Scheme: map
       Value: true
   Global Options:
     Fixed Frame: map
+    Frame Rate: 30
 """
         try:
-            with open('/tmp/slam_p.yaml', 'w') as f: f.write(config)
-            with open('/tmp/slam_r.rviz', 'w') as f: f.write(rviz)
-            subprocess.Popen(['ros2', 'run', 'slam_toolbox', 'async_slam_toolbox_node',
-                            '--ros-args', '--params-file', '/tmp/slam_p.yaml'],
+            with open('/tmp/mapper_rviz.rviz', 'w') as f: f.write(rviz)
+            subprocess.Popen(['rviz2', '-d', '/tmp/mapper_rviz.rviz'],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            subprocess.Popen(['rviz2', '-d', '/tmp/slam_r.rviz'],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.get_logger().info("RViz launched!")
         except:
             pass
 
-    def publish_tf(self):
-        now = self.get_clock().now().to_msg()
-        t = TransformStamped()
-        t.header.stamp = now
-        t.header.frame_id = 'odom'
-        t.child_frame_id = 'base_link'
-        t.transform.translation.x = self.x
-        t.transform.translation.y = self.y
-        t.transform.rotation.z = np.sin(self.yaw / 2)
-        t.transform.rotation.w = np.cos(self.yaw / 2)
-        self.tf_broadcaster.sendTransform(t)
+    def OLD_world_to_grid(self, wx, wy):
+        """Convert world coordinates to grid indices"""
+        gx = int((wx - self.grid_origin_x) / self.RESOLUTION)
+        gy = int((wy - self.grid_origin_y) / self.RESOLUTION)
+        return gx, gy
+
+    def OLD_bresenham(self, x0, y0, x1, y1):
+        """Bresenham line algorithm for ray tracing"""
+        points = []
+        dx = abs(x1 - x0)
+        dy = abs(y1 - y0)
+        sx = 1 if x0 < x1 else -1
+        sy = 1 if y0 < y1 else -1
+        err = dx - dy
         
-        t2 = TransformStamped()
-        t2.header.stamp = now
-        t2.header.frame_id = 'base_link'
-        t2.child_frame_id = 'laser'
-        t2.transform.translation.x = 0.1
-        t2.transform.rotation.w = 1.0
-        self.tf_broadcaster.sendTransform(t2)
+        while True:
+            if 0 <= x0 < self.grid_size and 0 <= y0 < self.grid_size:
+                points.append((x0, y0))
+            if x0 == x1 and y0 == y1:
+                break
+            e2 = 2 * err
+            if e2 > -dy:
+                err -= dy
+                x0 += sx
+            if e2 < dx:
+                err += dx
+                y0 += sy
+        return points
+
+    def OLD_update_map(self, ranges, angle_min, angle_inc):
+        """Update occupancy grid with confidence-based filtering"""
+        robot_gx, robot_gy = self.world_to_grid(self.x, self.y)
+        
+        if not (0 <= robot_gx < self.grid_size and 0 <= robot_gy < self.grid_size):
+            return
+        
+        # Only use every 5th ray (reduce noise)
+        for i in range(0, len(ranges), 5):
+            r = ranges[i]
+            if r < 0.3 or r > 7.0:  # Tighter range for reliability
+                continue
+            
+            ray_angle = angle_min + i * angle_inc + self.yaw
+            
+            # Hit point
+            hit_x = self.x + r * np.cos(ray_angle)
+            hit_y = self.y + r * np.sin(ray_angle)
+            hit_gx, hit_gy = self.world_to_grid(hit_x, hit_y)
+            
+            # Ray trace
+            line = self.bresenham(robot_gx, robot_gy, hit_gx, hit_gy)
+            
+            # Mark free space (misses)
+            for gx, gy in line[:-1]:
+                if 0 <= gx < self.grid_size and 0 <= gy < self.grid_size:
+                    self.miss_count[gy, gx] += 1
+                    # Only mark as free after enough misses
+                    if self.miss_count[gy, gx] >= self.MISS_THRESHOLD:
+                        if self.hit_count[gy, gx] < self.HIT_THRESHOLD:  # Not confidently an obstacle
+                            self.grid[gy, gx] = 0
+            
+            # Mark obstacle (hit)
+            if 0 <= hit_gx < self.grid_size and 0 <= hit_gy < self.grid_size:
+                self.hit_count[hit_gy, hit_gx] += 1
+                # Only mark as obstacle after enough hits
+                if self.hit_count[hit_gy, hit_gx] >= self.HIT_THRESHOLD:
+                    self.grid[hit_gy, hit_gx] = 100
+
+    def OLD_publish_map(self):
+        """Publish occupancy grid to RViz"""
+        msg = OccupancyGrid()
+        msg.header.frame_id = "map"
+        msg.header.stamp = self.get_clock().now().to_msg()
+        
+        msg.info.resolution = self.RESOLUTION
+        msg.info.width = self.grid_size
+        msg.info.height = self.grid_size
+        msg.info.origin.position.x = self.grid_origin_x
+        msg.info.origin.position.y = self.grid_origin_y
+        msg.info.origin.position.z = 0.0
+        msg.info.origin.orientation.w = 1.0
+        
+        msg.data = self.grid.flatten().tolist()
+        self.pub_map.publish(msg)
+
 
     def check_stuck(self):
-        if self.reversing or self.done:
+        if self.reversing:
             return
         elapsed = time.time() - self.start_time
         if elapsed < self.STARTUP_DELAY + 2:
@@ -165,10 +203,12 @@ Visualization Manager:
         self.x, self.y = msg.x, msg.y
 
     def lap_cb(self, msg):
-        if msg.data > self.lap and not self.done:
-            self.done = True
-            self.get_logger().info("LAP COMPLETE!")
-        self.lap = msg.data
+        if msg.data > self.lap:
+            self.lap = msg.data
+            self.get_logger().info(f"*** LAP {self.lap} COMPLETE! ***")
+            if self.lap >= self.max_lap:
+                self.get_logger().info(f"=== {self.max_lap} LAPS DONE! SUCCESS! ===")
+                # Could stop here, but let's keep going to see how far it gets!
 
     def get_right_wall_dist(self, ranges, n, center):
         """Get distance to right wall at -90 degrees"""
@@ -193,27 +233,8 @@ Visualization Manager:
         return float(np.min(front))
 
     def lidar_cb(self, msg):
-        # Republish for SLAM
-        scan = LaserScan()
-        scan.header = msg.header
-        scan.header.frame_id = 'laser'
-        scan.angle_min = msg.angle_min
-        scan.angle_max = msg.angle_max
-        scan.angle_increment = msg.angle_increment
-        scan.time_increment = msg.time_increment
-        scan.scan_time = msg.scan_time
-        scan.range_min = msg.range_min
-        scan.range_max = msg.range_max
-        scan.ranges = msg.ranges
-        scan.intensities = msg.intensities
-        self.pub_scan.publish(scan)
-        
         elapsed = time.time() - self.start_time
         if elapsed < self.STARTUP_DELAY:
-            self.publish(0.0, 0.0)
-            return
-        
-        if self.done:
             self.publish(0.0, 0.0)
             return
         
