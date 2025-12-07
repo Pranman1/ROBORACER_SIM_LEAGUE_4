@@ -215,7 +215,7 @@ def main():
     
     # 4. Resample to 200 points
     print(f"📏 Resampling from {len(final_path_raw)} to 200 points...")
-    final_path = resample_path(final_path_raw, num_points=200)
+    final_path = resample_path(final_path_raw, num_points=1000)  # More points = smoother!
 
     # 5. Output Array
     print("\n" + "="*40)

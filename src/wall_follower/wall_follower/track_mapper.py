@@ -72,8 +72,20 @@ class TrackMapper(Node):
         
         # ===== PURE PURSUIT =====
         self.raceline = None  # Will store waypoints after lap 1
+        self.curvatures = None  # Curvature at each waypoint
         self.pursuing = False  # Switch from wall follow to pure pursuit
-        self.LOOKAHEAD_DIST = 0.5  # Look 0.5m ahead
+        self.last_wp = 0  # Track waypoint progression
+        
+        # Speed limits (tunable!)
+        self.PP_MAX_SPEED = 0.06  # 6 cm/s on straights
+        self.PP_MIN_SPEED = 0.02  # 2 cm/s in tight turns
+        
+        # Steering damping
+        self.last_steer = 0.0
+        
+        # CRASH FALLBACK: If we crash, use wall follower forever
+        self.pp_crashed = False
+        
         self.RESOLUTION = 0.05
         self.MAP_SIZE = 30.0
         self.grid_size = int(self.MAP_SIZE / self.RESOLUTION)
@@ -431,9 +443,12 @@ Visualization Manager:
             
             # Resample to 200 points
             path_world = np.column_stack((wx, wy))
-            self.raceline = self.resample_path(path_world, 200)
+            self.raceline = self.resample_path(path_world, 1000)  # More points = smoother!
             
             self.get_logger().info(f"✅ Raceline generated: {len(self.raceline)} waypoints")
+            
+            # Calculate curvatures for adaptive speed/lookahead
+            self.calculate_curvatures()
             
             # Visualize and save
             self.visualize_raceline(path_pixels, checkpoints)
@@ -558,49 +573,182 @@ Visualization Manager:
             self.get_logger().info(f"   (Error: {e})")
             self.get_logger().info("   Run centerline_skeleton.py separately to visualize")
     
+    def calculate_curvatures(self):
+        """Calculate curvature at each waypoint for adaptive control"""
+        if self.raceline is None or len(self.raceline) < 10:
+            return
+        
+        n = len(self.raceline)
+        curvatures = np.zeros(n)
+        
+        # Use 3-point curvature formula
+        step = 5  # Points to skip for smoother curvature
+        for i in range(n):
+            p1 = self.raceline[(i - step) % n]
+            p2 = self.raceline[i]
+            p3 = self.raceline[(i + step) % n]
+            
+            # Vectors
+            v1 = p2 - p1
+            v2 = p3 - p2
+            
+            # Angle change
+            angle1 = np.arctan2(v1[1], v1[0])
+            angle2 = np.arctan2(v2[1], v2[0])
+            dangle = angle2 - angle1
+            
+            # Normalize
+            if dangle > np.pi: dangle -= 2*np.pi
+            if dangle < -np.pi: dangle += 2*np.pi
+            
+            # Distance
+            dist = np.linalg.norm(v1) + np.linalg.norm(v2)
+            
+            # Curvature = angle change / distance
+            if dist > 0.01:
+                curvatures[i] = abs(dangle) / dist
+            else:
+                curvatures[i] = 0
+        
+        # Smooth curvatures
+        self.curvatures = uniform_filter1d(curvatures, size=50, mode='wrap')
+        
+        max_k = np.max(self.curvatures)
+        avg_k = np.mean(self.curvatures)
+        self.get_logger().info(f"📊 Curvature calculated: max={max_k:.3f}, avg={avg_k:.3f}")
+    
     def pure_pursuit(self, ranges, n, center):
-        """Pure pursuit controller - follow the raceline"""
+        """ULTIMATE Pure Pursuit: Path + Wall Avoidance + Damping + Safety!"""
         if self.raceline is None or len(self.raceline) == 0:
-            self.get_logger().warn("No raceline!")
-            return 0.0, 0.0
+            return None, None  # Signal to use wall follower
         
-        # Find closest point on raceline
-        current_pos = np.array([self.x, self.y])
-        distances = np.linalg.norm(self.raceline - current_pos, axis=1)
-        closest_idx = np.argmin(distances)
-        closest_dist = distances[closest_idx]
-        closest_wp = self.raceline[closest_idx]
+        # ===== 1. LIDAR: Get wall distances =====
+        left_min = float(np.min(ranges[center+40:center+80]))   # Left
+        right_min = float(np.min(ranges[center-80:center-40]))  # Right
+        front = float(np.min(ranges[center-25:center+25]))      # Front
         
-        # Look ahead - REDUCED to 3-5 points (was 10, too far!)
-        lookahead_points = max(3, min(5, int(len(self.raceline) * 0.025)))  # 2.5% of path
-        lookahead_idx = (closest_idx + lookahead_points) % len(self.raceline)
-        target = self.raceline[lookahead_idx]
+        # ===== 2. CRASH DETECTION =====
+        if front < 0.15:
+            self.pp_crashed = True
+            self.get_logger().warn("💥 CRASH! Switching to wall follower permanently!")
+            return None, None
         
-        # Calculate steering angle
+        # ===== 3. FIND CLOSEST WAYPOINT =====
+        pos = np.array([self.x, self.y])
+        num_wps = len(self.raceline)
+        
+        search_range = 80
+        best_idx = self.last_wp
+        best_dist = float('inf')
+        
+        for offset in range(-search_range, search_range + 1):
+            idx = (self.last_wp + offset) % num_wps
+            d = np.linalg.norm(self.raceline[idx] - pos)
+            if d < best_dist:
+                best_dist = d
+                best_idx = idx
+        
+        closest = best_idx
+        xte = best_dist
+        
+        # Update tracker
+        wp_diff = (closest - self.last_wp) % num_wps
+        if wp_diff > num_wps // 2:
+            wp_diff -= num_wps
+        if -15 <= wp_diff <= 80:
+            self.last_wp = closest
+        
+        # ===== 4. ADAPTIVE LOOKAHEAD =====
+        if self.curvatures is not None:
+            curv = self.curvatures[closest]
+            max_curv = 0.35
+            curv_factor = min(curv / max_curv, 1.0)
+            lookahead = int(35 - 20 * curv_factor)  # 35 → 15
+        else:
+            lookahead = 25
+            curv = 0
+        
+        target_idx = (closest + lookahead) % num_wps
+        target = self.raceline[target_idx]
+        
+        # ===== 5. PATH FOLLOWING STEERING =====
         dx = target[0] - self.x
         dy = target[1] - self.y
-        target_dist = np.sqrt(dx*dx + dy*dy)
         target_angle = np.arctan2(dy, dx)
         
-        angle_diff = target_angle - self.yaw
-        # Normalize to [-pi, pi]
-        while angle_diff > np.pi:
-            angle_diff -= 2 * np.pi
-        while angle_diff < -np.pi:
-            angle_diff += 2 * np.pi
+        err = target_angle - self.yaw
+        if err > np.pi: err -= 2*np.pi
+        if err < -np.pi: err += 2*np.pi
         
-        steer = np.clip(angle_diff * 2.0, -self.MAX_STEER, self.MAX_STEER)
+        path_steer = err * 1.2  # Lower gain = less aggressive
         
-        # Speed based on steering
-        speed = self.SPEED * (1.0 - abs(steer) / self.MAX_STEER * 0.5)
+        # ===== 6. WALL AVOIDANCE STEERING =====
+        wall_steer = 0.0
+        wall_thresh = 0.45
         
-        # Debug logging every 30 frames
-        if self.count % 30 == 0:
+        if left_min < wall_thresh:
+            wall_steer -= (wall_thresh - left_min) * 2.0  # Steer right
+        if right_min < wall_thresh:
+            wall_steer += (wall_thresh - right_min) * 2.0  # Steer left
+        
+        # Front wall emergency
+        if front < 0.5:
+            if left_min < right_min:
+                wall_steer -= 0.4
+            else:
+                wall_steer += 0.4
+        
+        # ===== 7. BLEND PATH + WALL AVOIDANCE =====
+        min_side = min(left_min, right_min)
+        wall_weight = 0.0
+        if min_side < wall_thresh:
+            wall_weight = min((wall_thresh - min_side) / wall_thresh, 0.6)
+        
+        raw_steer = (1.0 - wall_weight) * path_steer + wall_weight * wall_steer
+        
+        # ===== 8. STEERING DAMPING (reduces oscillation!) =====
+        steer_change = raw_steer - self.last_steer
+        damped_steer = raw_steer - steer_change * 0.4  # 40% damping
+        
+        steer = np.clip(damped_steer, -self.MAX_STEER, self.MAX_STEER)
+        self.last_steer = steer
+        
+        # ===== 9. ADAPTIVE SPEED =====
+        if self.curvatures is not None:
+            look_ahead_curv = int(lookahead * 1.5)
+            indices = [(closest + i) % num_wps for i in range(look_ahead_curv)]
+            upcoming_curv = np.max(self.curvatures[indices])
+            curv_factor = min(upcoming_curv / max_curv, 1.0)
+            speed = self.PP_MAX_SPEED - (self.PP_MAX_SPEED - self.PP_MIN_SPEED) * curv_factor
+        else:
+            speed = 0.04
+        
+        # Reduce for steering
+        speed *= (1.0 - abs(steer) / self.MAX_STEER * 0.35)
+        
+        # ===== 10. SAFETY LIMITS =====
+        if front < 0.3:
+            speed = min(speed, 0.015)
+        elif front < 0.5:
+            speed = min(speed, 0.025)
+        elif front < 0.7:
+            speed = min(speed, 0.035)
+        
+        if min_side < 0.25:
+            speed = min(speed, 0.02)
+        elif min_side < 0.35:
+            speed = min(speed, 0.03)
+        
+        if xte > 0.35:
+            speed = min(speed, 0.025)
+        
+        # ===== DEBUG =====
+        if self.count % 20 == 0:
+            curv_str = f"k={curv:.2f}" if self.curvatures is not None else "-"
             self.get_logger().info(
-                f"🎯 PP | Pos:({self.x:.2f},{self.y:.2f}) Yaw:{np.degrees(self.yaw):.0f}° | "
-                f"Closest:{closest_idx} XTE:{closest_dist:.3f}m | "
-                f"Target:{lookahead_idx} Dist:{target_dist:.3f}m AngleDiff:{np.degrees(angle_diff):.1f}° | "
-                f"Spd:{speed:.3f} Str:{steer:.2f}"
+                f"🏎️ WP:{closest} XTE:{xte:.2f} {curv_str} | "
+                f"L:{left_min:.2f} R:{right_min:.2f} F:{front:.2f} | "
+                f"Spd:{speed:.3f} Str:{steer:.2f} w:{wall_weight:.1f}"
             )
         
         return speed, steer
@@ -708,11 +856,19 @@ Visualization Manager:
         n = len(ranges)
         center = n // 2
         
-        # PURE PURSUIT MODE - Follow raceline!
-        if self.pursuing:
-            speed, steer = self.pure_pursuit(ranges, n, center)
-            self.publish(speed, steer)
-            return
+        # PURE PURSUIT with CRASH FALLBACK
+        if self.pursuing and not self.pp_crashed:
+            result = self.pure_pursuit(ranges, n, center)
+            if result[0] is not None:
+                speed, steer = result
+                self.publish(speed, steer)
+                return
+            # If None returned, fall through to wall follower
+        
+        # If crashed or None, use wall follower (it never crashes!)
+        if self.pursuing and self.pp_crashed:
+            if self.count % 50 == 0:
+                self.get_logger().info("🛡️ Using wall follower (crash fallback)")
         
         # Update map (doesn't affect controls!)
         self.update_map(ranges, msg.angle_min, msg.angle_increment)
@@ -748,7 +904,7 @@ Visualization Manager:
                 if self.generate_raceline():
                     self.pursuing = True
                     self.stopped = False
-                    self.get_logger().info("✅ Switching to PURE PURSUIT mode!")
+                    self.get_logger().info("✅ ADAPTIVE Pure Pursuit activated! 🏎️")
                     self.get_logger().info(f"   Current car pos: ({self.x:.3f}, {self.y:.3f})")
                     # Find closest waypoint to current position
                     dists = np.linalg.norm(self.raceline - np.array([self.x, self.y]), axis=1)
