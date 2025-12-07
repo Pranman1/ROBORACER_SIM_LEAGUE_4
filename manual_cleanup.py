@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 """
-Manual Map Cleanup - Load, Clean, Save
+SIMPLE 3-STEP CLEANUP: Melt → Fill → Re-Wall
 """
 import numpy as np
 import json
-from scipy.ndimage import binary_closing, binary_dilation
-from scipy.spatial import ConvexHull
-from matplotlib.path import Path as MplPath
 import matplotlib.pyplot as plt
+from scipy.ndimage import binary_closing, binary_dilation, binary_erosion, binary_fill_holes, label
 
 print("=" * 60)
-print("MANUAL MAP CLEANUP")
+print("SIMPLE 3-STEP CLEANUP")
 print("=" * 60)
 
 # Load
@@ -20,128 +18,102 @@ with open('track_map_meta.json', 'r') as f:
     meta = json.load(f)
 
 grid_orig = grid.copy()
-
 print(f"   Loaded: {grid.shape[0]}x{grid.shape[1]}")
-free_before = np.sum(grid == 0)
-wall_before = np.sum(grid == 100)
-unknown_before = np.sum(grid == -1)
-print(f"   Before: Free={free_before} ({100*free_before/grid.size:.1f}%) Walls={wall_before} ({100*wall_before/grid.size:.1f}%)")
 
-# Clean
-print("\n2️⃣ Cleaning...")
-
-from scipy.ndimage import binary_closing, binary_dilation, binary_opening, label, binary_erosion, binary_fill_holes
-
-# Step 0: Remove tiny black spots (noise smaller than real walls)
-print("   🧹 Removing tiny black noise...")
+# STEP 1: MELT small black noise (keep only BIG walls)
+print("\n2️⃣ STEP 1: Melting small black noise...")
 walls = (grid == 100)
-labeled_walls, num_wall_features = label(walls)
+labeled_walls, num_walls = label(walls)
 
-# Remove wall blobs smaller than 50 pixels
-min_wall_size = 50
-for i in range(1, num_wall_features + 1):
-    wall_blob_size = np.sum(labeled_walls == i)
-    if wall_blob_size < min_wall_size:
-        # Convert small black spots to white (free space)
+min_wall_size = 100  # Keep walls bigger than 100 pixels
+for i in range(1, num_walls + 1):
+    if np.sum(labeled_walls == i) < min_wall_size:
+        # Remove small black spots → make white
         grid[labeled_walls == i] = 0
 
-removed_count = num_wall_features - np.sum([np.sum(labeled_walls == i) >= min_wall_size for i in range(1, num_wall_features + 1)])
-print(f"   ✓ Removed {removed_count} tiny black spots")
+removed = num_walls - np.sum([np.sum(labeled_walls == i) >= min_wall_size for i in range(1, num_walls + 1)])
+print(f"   ✓ Melted {removed} small black spots")
 
-# Step 1: Fill gaps in walls AGGRESSIVELY (make them solid and thick)
-free_space = (grid == 0)
-walls = (grid == 100)
+# STEP 2: FILL white areas (expand + fill holes)
+print("\n3️⃣ STEP 2: Filling white track...")
+free = (grid == 0)
 
-# Close LARGE gaps in walls
-walls_closed = binary_closing(walls, np.ones((9, 9)))
-# Make walls thicker
-walls_thick = binary_dilation(walls_closed, np.ones((4, 4)))
-print("   ✓ Filled wall gaps and made thick")
+# Expand white to fill gaps
+free_expanded = binary_dilation(free, structure=np.ones((15, 15)))
+print("   ✓ Expanded white")
 
-# Step 2: Expand free space into nearby unknown (balanced expansion)
-free_expanded = binary_dilation(free_space, np.ones((13, 13)))
-free_expanded = free_expanded & ~walls_thick
-print("   ✓ Expanded free space")
-
-# Step 3: Keep only LARGEST connected component
-labeled, num_features = label(free_expanded)
-if num_features > 0:
-    sizes = np.bincount(labeled.ravel())
+# Keep only largest white blob (main track)
+labeled_free, num_free = label(free_expanded)
+if num_free > 0:
+    sizes = np.bincount(labeled_free.ravel())
     sizes[0] = 0
-    largest_component = sizes.argmax()
-    free_expanded = (labeled == largest_component)
-    print(f"   ✓ Kept largest track region (removed {num_features-1} isolated areas)")
+    largest = sizes.argmax()
+    free_main = (labeled_free == largest)
+    print(f"   ✓ Kept largest track (removed {num_free-1} blobs)")
+else:
+    free_main = free_expanded
 
-# Step 4: Fill ALL holes inside free space (unknown areas surrounded by white)
-free_filled = binary_fill_holes(free_expanded)
-print("   ✓ Filled ALL holes surrounded by white")
+# Fill all holes inside track
+free_filled = binary_fill_holes(free_main)
+print("   ✓ Filled holes")
 
-# Step 5: Remove overlap with walls
-free_final = free_filled & ~walls_thick
+# STEP 3: RE-ADD big black walls
+print("\n4️⃣ STEP 3: Re-adding big walls...")
+# Find original BIG walls (not small noise)
+big_walls = np.zeros_like(grid, dtype=bool)
+for i in range(1, num_walls + 1):
+    if np.sum(labeled_walls == i) >= min_wall_size:
+        big_walls |= (labeled_walls == i)
 
-# Step 6: Add THIN perimeter around all white areas
-free_inner = binary_erosion(free_final, np.ones((2, 2)))
-perimeter = free_final & ~free_inner
+# Make walls thick and solid
+walls_thick = binary_closing(big_walls, structure=np.ones((7, 7)))
+walls_thick = binary_dilation(walls_thick, structure=np.ones((3, 3)))
+print("   ✓ Thickened walls")
 
-# Combine walls + perimeter
+# Add perimeter around white
+free_inner = binary_erosion(free_filled, structure=np.ones((2, 2)))
+perimeter = free_filled & ~free_inner
 walls_final = walls_thick | perimeter
-print("   ✓ Added thin perimeter walls")
+print("   ✓ Added perimeter")
 
-# Final free space (away from walls)
-free_final = free_final & ~walls_final
+# Final track = white minus walls
+track_final = free_filled & ~walls_final
 
-# Apply to grid
-grid[:] = -1  # Reset to unknown
-grid[free_final] = 0  # Free space (cleaned track)
-grid[walls_final] = 100  # Walls (super thick + perimeter)
-print("   ✓ Applied cleaned map")
-
-free_after = np.sum(grid == 0)
-wall_after = np.sum(grid == 100)
-unknown_after = np.sum(grid == -1)
-
-print(f"\n   After: Free={free_after} ({100*free_after/grid.size:.1f}%) Walls={wall_after} ({100*wall_after/grid.size:.1f}%)")
-print(f"   Change: Free +{free_after-free_before} Walls +{wall_after-wall_before}")
+# Build final grid
+new_grid = np.ones_like(grid) * -1  # Unknown
+new_grid[track_final] = 0  # Free (white)
+new_grid[walls_final] = 100  # Walls (black)
 
 # Save
-print("\n3️⃣ Saving cleaned map...")
-np.save('track_map_cleaned.npy', grid)
-print("   ✓ Saved to: track_map_cleaned.npy")
-
-# Also save metadata
+print("\n💾 Saving...")
+np.save('track_map_cleaned.npy', new_grid)
 with open('track_map_cleaned_meta.json', 'w') as f:
     json.dump(meta, f, indent=2)
-print("   ✓ Saved metadata: track_map_cleaned_meta.json")
+print("   ✓ Saved track_map_cleaned.npy")
 
 # Visualize
-print("\n5️⃣ Visualizing...")
-fig, axes = plt.subplots(1, 2, figsize=(16, 8))
+print("\n📊 Visualizing...")
+fig, axes = plt.subplots(1, 2, figsize=(12, 6))
 
-# Before
 ax = axes[0]
-display = np.zeros_like(grid_orig, dtype=float)
-display[grid_orig == -1] = 0.5
-display[grid_orig == 0] = 1.0
-display[grid_orig == 100] = 0.0
-ax.imshow(display, cmap='gray', origin='lower', vmin=0, vmax=1)
-ax.set_title(f"BEFORE Cleanup\nFree: {100*free_before/grid.size:.1f}%", fontsize=14, fontweight='bold')
+vis_before = np.zeros_like(grid_orig, dtype=float)
+vis_before[grid_orig == -1] = 0.5
+vis_before[grid_orig == 0] = 1.0
+vis_before[grid_orig == 100] = 0.0
+ax.imshow(vis_before, cmap='gray', origin='lower')
+ax.set_title("BEFORE: Noisy")
 
-# After
 ax = axes[1]
-display = np.zeros_like(grid, dtype=float)
-display[grid == -1] = 0.5
-display[grid == 0] = 1.0
-display[grid == 100] = 0.0
-ax.imshow(display, cmap='gray', origin='lower', vmin=0, vmax=1)
-ax.set_title(f"AFTER Cleanup\nFree: {100*free_after/grid.size:.1f}%", fontsize=14, fontweight='bold')
+vis_after = np.zeros_like(new_grid, dtype=float)
+vis_after[new_grid == -1] = 0.5
+vis_after[new_grid == 0] = 1.0
+vis_after[new_grid == 100] = 0.0
+ax.imshow(vis_after, cmap='gray', origin='lower')
+ax.set_title("AFTER: Melt→Fill→Wall")
 
 plt.tight_layout()
-plt.savefig('cleanup_comparison.png', dpi=150, bbox_inches='tight')
+plt.savefig('cleanup_comparison.png', dpi=150)
 print("   ✓ Saved: cleanup_comparison.png")
 plt.show()
 
-print("\n✅ DONE!")
-print("   - Cleaned map saved as: track_map_cleaned.npy")
-print("   - Original map unchanged: track_map.npy")
-print("   - Now update Delaunay script to use track_map_cleaned.npy")
-
+print("\n✅ DONE! Clean map saved.")

@@ -13,10 +13,10 @@ import sys
 sys.setrecursionlimit(50000)
 
 def load_map_data():
-    if os.path.exists('track_map_clea2ed.npy'):
+    if os.path.exists('track_map_cle22ed.npy'):
         print("📂 Loading cleaned map...")
-        grid = np.load('track_map_clean2d.npy')
-        with open('track_map_cleaned_me2a.json', 'r') as f:
+        grid = np.load('track_map_cleaned.npy')
+        with open('track_map_cleaned_meta.json', 'r') as f:
             meta = json.load(f)
     else:
         print("📂 Loading original map...")
@@ -49,40 +49,106 @@ def get_costmap(grid):
     return cost_map, dist_map
 
 def get_quadrant_checkpoints(dist_map):
-    valid_y, valid_x = np.where(dist_map > 0)
-    center_y = np.mean(valid_y)
-    center_x = np.mean(valid_x)
-    h, w = dist_map.shape
-    y_grid, x_grid = np.ogrid[:h, :w]
-    angles = np.arctan2(y_grid - center_y, x_grid - center_x)
+    """Find 4 checkpoints distributed by ARC LENGTH around the track"""
+    print("📍 Finding checkpoints spaced by arc length...")
+    from scipy.ndimage import maximum_filter, gaussian_filter
+    from scipy.spatial.distance import cdist
     
-    # Order: BottomLeft, BottomRight, TopRight, TopLeft
-    sectors = [(-np.pi, -np.pi/2), (-np.pi/2, 0), (0, np.pi/2), (np.pi/2, np.pi)]
+    # Find centerline/ridge points (high distance values)
+    threshold = np.percentile(dist_map[dist_map > 0], 60)
+    
+    # Smooth distance map
+    dist_smooth = gaussian_filter(dist_map, sigma=2)
+    
+    # Find local maxima (ridge points)
+    local_max = maximum_filter(dist_smooth, size=7)
+    ridge = (dist_smooth == local_max) & (dist_map > threshold)
+    
+    ry, rx = np.where(ridge)
+    
+    if len(rx) < 10:
+        print("   ❌ Too few ridge points!")
+        return []
+    
+    print(f"   Found {len(rx)} ridge points")
+    
+    # Sort by ANGLE from center to get circular ordering
+    center_x, center_y = np.mean(rx), np.mean(ry)
+    angles = np.arctan2(ry - center_y, rx - center_x)
+    sorted_idx = np.argsort(angles)
+    
+    # Reorder points by angle
+    rx_ordered = rx[sorted_idx]
+    ry_ordered = ry[sorted_idx]
+    
+    # Calculate cumulative arc length
+    arc_length = np.zeros(len(rx_ordered))
+    for i in range(1, len(rx_ordered)):
+        dx = rx_ordered[i] - rx_ordered[i-1]
+        dy = ry_ordered[i] - ry_ordered[i-1]
+        arc_length[i] = arc_length[i-1] + np.sqrt(dx**2 + dy**2)
+    
+    total_length = arc_length[-1]
+    print(f"   Total path length: {total_length:.1f} pixels")
+    
+    # Pick 4 points at 0%, 20%, 50%, 80% of arc length (better distribution!)
+    target_lengths = [0, 0.20*total_length, 0.5*total_length, 0.80*total_length]
     checkpoints = []
+    checkpoint_names = ["Start (0%)", "20%", "Half (50%)", "80%"]
     
-    for i, (start_ang, end_ang) in enumerate(sectors):
-        angle_mask = (angles >= start_ang) & (angles < end_ang)
-        valid_mask = angle_mask & (dist_map > 0)
-        if np.sum(valid_mask) == 0: continue
-        sector_dist = dist_map.copy()
-        sector_dist[~valid_mask] = -1
-        best_idx = np.argmax(sector_dist)
-        checkpoints.append(np.unravel_index(best_idx, dist_map.shape))
-        
+    for target, name in zip(target_lengths, checkpoint_names):
+        # Find closest point to target arc length
+        idx = np.argmin(np.abs(arc_length - target))
+        cp = (ry_ordered[idx], rx_ordered[idx])
+        checkpoints.append(cp)
+        print(f"   ✓ {name}: ({cp[0]},{cp[1]}) @ {arc_length[idx]:.1f}px dist:{dist_map[cp[0], cp[1]]:.1f}")
+    
+    print(f"\n   Total checkpoints: {len(checkpoints)}")
     return checkpoints
 
 def route_segments(cost_map, checkpoints):
+    print(f"\n🔗 Routing between {len(checkpoints)} checkpoints...")
+    
+    # Reorder: Go 1 -> 4 -> 3 -> 2 -> 1 (indices: 0 -> 3 -> 2 -> 1 -> 0)
+    ordered_checkpoints = [checkpoints[0], checkpoints[3], checkpoints[2], checkpoints[1]]
+    print(f"   Route order: CP1 -> CP4 -> CP3 -> CP2 -> CP1")
+    
     full_path = []
-    num_points = len(checkpoints)
+    num_points = len(ordered_checkpoints)
+    
     for i in range(num_points):
-        start = checkpoints[i]
-        end = checkpoints[(i + 1) % num_points]
+        start = ordered_checkpoints[i]
+        end = ordered_checkpoints[(i + 1) % num_points]
+        
+        # Labels for display: [1, 4, 3, 2]
+        labels = [1, 4, 3, 2]
+        print(f"   Segment CP{labels[i]} -> CP{labels[(i+1)%num_points]}: ({start[0]},{start[1]}) -> ({end[0]},{end[1]})")
+        
         try:
             indices, weight = route_through_array(cost_map, start, end, fully_connected=True, geometric=True)
             segment = np.array(indices)
-            if i > 0: full_path.append(segment[1:])
-            else: full_path.append(segment)
-        except: return None
+            print(f"      ✅ SUCCESS: {len(segment)} points, cost: {weight:.1f}")
+            
+            if i > 0: 
+                full_path.append(segment[1:])
+            else: 
+                full_path.append(segment)
+                
+        except Exception as e:
+            print(f"      ❌ FAILED: {e}")
+            print(f"      Start cost: {cost_map[start[0], start[1]]:.3f}")
+            print(f"      End cost: {cost_map[end[0], end[1]]:.3f}")
+            
+            # Check if there's ANY valid path
+            valid_between = np.sum(cost_map[min(start[0],end[0]):max(start[0],end[0])+1, 
+                                             min(start[1],end[1]):max(start[1],end[1])+1] != np.inf)
+            print(f"      Valid cells in rectangle: {valid_between}")
+            return None
+    
+    if len(full_path) == 0:
+        print("   ❌ No segments succeeded!")
+        return None
+        
     return np.vstack(full_path)
 
 def resample_path(path, num_points=200):
@@ -173,17 +239,27 @@ def main():
     df = pd.DataFrame({'x': final_path[:,0], 'y': final_path[:,1], 'v': 2.0})
     df.to_csv('raceline.csv', index=False)
     
-    plt.figure(figsize=(10,10))
+    plt.figure(figsize=(12,12))
     plt.imshow(clean_grid, cmap='gray', origin='lower')
+    
+    # Plot the 4 checkpoints FIRST (so we can see them)
+    checkpoint_colors = ['red', 'cyan', 'yellow', 'orange']
+    checkpoint_names = ['Q1', 'Q2', 'Q3', 'Q4']
+    for i, cp in enumerate(checkpoints):
+        plt.scatter(cp[1], cp[0], c=checkpoint_colors[i], s=300, marker='*', 
+                   edgecolors='black', linewidths=2, zorder=15, 
+                   label=f'{checkpoint_names[i]} Checkpoint')
+    
     # Plot converting world back to pixels
     px_plot = (final_path[:,0] - ox) / res
     py_plot = (final_path[:,1] - oy) / res
     
-    plt.plot(px_plot, py_plot, 'r-', linewidth=2)
+    plt.plot(px_plot, py_plot, 'lime', linewidth=3, label='Racing Line', alpha=0.8)
+    
     # Plot first few points to show direction
-    plt.scatter(px_plot[0], py_plot[0], c='yellow', s=150, label='Start (Yellow)', zorder=10)
-    plt.scatter(px_plot[10], py_plot[10], c='orange', s=50, label='Direction', zorder=10)
-    plt.scatter(px_plot[50], py_plot[50], c='cyan', s=50, label='Towards Blue', zorder=10)
+    plt.scatter(px_plot[0], py_plot[0], c='lime', s=200, label='Start', zorder=12, 
+               edgecolors='green', linewidths=3)
+    plt.scatter(px_plot[50], py_plot[50], c='blue', s=100, label='Midpoint', zorder=11)
     
     plt.legend()
     plt.title("Final Exported Raceline (200 pts)")
