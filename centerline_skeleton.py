@@ -49,17 +49,13 @@ def get_costmap(grid):
     return cost_map, dist_map
 
 def get_quadrant_checkpoints(dist_map):
-    """Find 4 checkpoints: TOP, BOTTOM, MIDDLE-LEFT, MIDDLE-RIGHT"""
-    print("📍 Finding TOP/BOTTOM/LEFT/RIGHT checkpoints...")
+    """Find 4 checkpoints: ONE in EACH quadrant (X/Y split)"""
+    print("📍 Finding 4 checkpoints: ONE per quadrant...")
     from scipy.ndimage import maximum_filter, gaussian_filter
     
-    # Find centerline/ridge points (high distance values)
+    # Find centerline/ridge points
     threshold = np.percentile(dist_map[dist_map > 0], 50)
-    
-    # Smooth distance map
     dist_smooth = gaussian_filter(dist_map, sigma=2)
-    
-    # Find local maxima (ridge points)
     local_max = maximum_filter(dist_smooth, size=7)
     ridge = (dist_smooth == local_max) & (dist_map > threshold)
     
@@ -74,56 +70,40 @@ def get_quadrant_checkpoints(dist_map):
     # Get distances for all ridge points
     dists = np.array([dist_map[ry[i], rx[i]] for i in range(len(rx))])
     
-    # Find bounds
-    min_y, max_y = np.min(ry), np.max(ry)
-    min_x, max_x = np.min(rx), np.max(rx)
-    mid_y = (min_y + max_y) / 2
-    mid_x = (min_x + max_x) / 2
+    # Find center
+    center_y = np.mean(ry)
+    center_x = np.mean(rx)
+    print(f"   Center: ({center_x:.1f}, {center_y:.1f})")
     
-    checkpoints = []
+    # Split into 4 quadrants
+    # Q1: top-right, Q2: top-left, Q3: bottom-left, Q4: bottom-right
+    quadrants = []
+    quad_names = ["TOP-RIGHT", "TOP-LEFT", "BOTTOM-LEFT", "BOTTOM-RIGHT"]
     
-    # 1. TOP-MOST (highest Y, widest)
-    top_mask = ry > (max_y - (max_y - min_y) * 0.3)  # Top 30%
-    if np.any(top_mask):
-        top_idx = np.where(top_mask)[0]
-        best = top_idx[np.argmax(dists[top_idx])]
-        checkpoints.append((ry[best], rx[best]))
-        print(f"   ✓ TOP: ({ry[best]},{rx[best]}) width={dists[best]:.1f}")
+    for qname, (y_cond, x_cond) in zip(quad_names, 
+                                        [(lambda y: y >= center_y, lambda x: x >= center_x),  # Q1
+                                         (lambda y: y >= center_y, lambda x: x < center_x),    # Q2
+                                         (lambda y: y < center_y, lambda x: x < center_x),     # Q3
+                                         (lambda y: y < center_y, lambda x: x >= center_x)]):  # Q4
+        mask = y_cond(ry) & x_cond(rx)
+        if np.any(mask):
+            q_idx = np.where(mask)[0]
+            best = q_idx[np.argmax(dists[q_idx])]
+            cp = (ry[best], rx[best])
+            quadrants.append(cp)
+            print(f"   ✓ {qname}: ({cp[0]},{cp[1]}) width={dists[best]:.1f}")
+        else:
+            print(f"   ❌ No points in {qname}")
     
-    # 2. BOTTOM-MOST (lowest Y, widest)
-    bot_mask = ry < (min_y + (max_y - min_y) * 0.3)  # Bottom 30%
-    if np.any(bot_mask):
-        bot_idx = np.where(bot_mask)[0]
-        best = bot_idx[np.argmax(dists[bot_idx])]
-        checkpoints.append((ry[best], rx[best]))
-        print(f"   ✓ BOTTOM: ({ry[best]},{rx[best]}) width={dists[best]:.1f}")
-    
-    # 3. MIDDLE-LEFT (middle Y, leftmost X, widest)
-    mid_mask = (ry > min_y + (max_y - min_y) * 0.3) & (ry < max_y - (max_y - min_y) * 0.3)
-    left_mask = mid_mask & (rx < mid_x)
-    if np.any(left_mask):
-        left_idx = np.where(left_mask)[0]
-        best = left_idx[np.argmax(dists[left_idx])]
-        checkpoints.append((ry[best], rx[best]))
-        print(f"   ✓ MID-LEFT: ({ry[best]},{rx[best]}) width={dists[best]:.1f}")
-    
-    # 4. MIDDLE-RIGHT (middle Y, rightmost X, widest)
-    right_mask = mid_mask & (rx > mid_x)
-    if np.any(right_mask):
-        right_idx = np.where(right_mask)[0]
-        best = right_idx[np.argmax(dists[right_idx])]
-        checkpoints.append((ry[best], rx[best]))
-        print(f"   ✓ MID-RIGHT: ({ry[best]},{rx[best]}) width={dists[best]:.1f}")
-    
-    print(f"\n   Total checkpoints: {len(checkpoints)}")
-    return checkpoints
+    print(f"\n   Total: {len(quadrants)} checkpoints")
+    return quadrants
 
 def route_segments(cost_map, checkpoints):
     print(f"\n🔗 Routing between {len(checkpoints)} checkpoints...")
     
-    # Reorder: Go 1 -> 4 -> 3 -> 2 -> 1 (indices: 0 -> 3 -> 2 -> 1 -> 0)
+    # Reorder: TOP-RIGHT -> BOTTOM-RIGHT -> BOTTOM-LEFT -> TOP-LEFT -> loop
     ordered_checkpoints = [checkpoints[0], checkpoints[3], checkpoints[2], checkpoints[1]]
-    print(f"   Route order: CP1 -> CP4 -> CP3 -> CP2 -> CP1")
+    print(f"   Route order: TR -> BR -> BL -> TL -> TR")
     
     full_path = []
     num_points = len(ordered_checkpoints)
@@ -132,9 +112,9 @@ def route_segments(cost_map, checkpoints):
         start = ordered_checkpoints[i]
         end = ordered_checkpoints[(i + 1) % num_points]
         
-        # Labels for display: [1, 4, 3, 2]
-        labels = [1, 4, 3, 2]
-        print(f"   Segment CP{labels[i]} -> CP{labels[(i+1)%num_points]}: ({start[0]},{start[1]}) -> ({end[0]},{end[1]})")
+        # Labels for display
+        labels = ["TR", "BR", "BL", "TL"]
+        print(f"   Segment {labels[i]} -> {labels[(i+1)%num_points]}: ({start[0]},{start[1]}) -> ({end[0]},{end[1]})")
         
         try:
             indices, weight = route_through_array(cost_map, start, end, fully_connected=True, geometric=True)

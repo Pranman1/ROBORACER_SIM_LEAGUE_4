@@ -395,9 +395,9 @@ Visualization Manager:
                 self.get_logger().error(f"❌ Need 4 checkpoints, got {len(checkpoints)}")
                 return False
             
-            # Route through checkpoints in order: 1 -> 4 -> 3 -> 2 -> 1
+            # Route through checkpoints: TR -> BR -> BL -> TL -> TR
             ordered_checkpoints = [checkpoints[0], checkpoints[3], checkpoints[2], checkpoints[1]]
-            self.get_logger().info("   Route order: CP1 -> CP4 -> CP3 -> CP2 -> CP1")
+            self.get_logger().info("   Route: TR -> BR -> BL -> TL -> TR")
             
             full_path = []
             for i in range(len(ordered_checkpoints)):
@@ -447,16 +447,12 @@ Visualization Manager:
             return False
     
     def get_arc_length_checkpoints(self, dist_map):
-        """Find 4 checkpoints: TOP, BOTTOM, MIDDLE-LEFT, MIDDLE-RIGHT"""
+        """Find 4 checkpoints: ONE in EACH quadrant (X/Y split)"""
         from scipy.ndimage import maximum_filter, gaussian_filter
         
-        # Find centerline/ridge points (high distance values)
+        # Find centerline/ridge points
         threshold = np.percentile(dist_map[dist_map > 0], 50)
-        
-        # Smooth distance map
         dist_smooth = gaussian_filter(dist_map, sigma=2)
-        
-        # Find local maxima (ridge points)
         local_max = maximum_filter(dist_smooth, size=7)
         ridge = (dist_smooth == local_max) & (dist_map > threshold)
         
@@ -471,49 +467,29 @@ Visualization Manager:
         # Get distances for all ridge points
         dists = np.array([dist_map[ry[i], rx[i]] for i in range(len(rx))])
         
-        # Find bounds
-        min_y, max_y = np.min(ry), np.max(ry)
-        min_x, max_x = np.min(rx), np.max(rx)
-        mid_y = (min_y + max_y) / 2
-        mid_x = (min_x + max_x) / 2
+        # Find center
+        center_y = np.mean(ry)
+        center_x = np.mean(rx)
         
-        checkpoints = []
+        # Split into 4 quadrants - ONE checkpoint per quadrant!
+        quadrants = []
+        quad_names = ["TOP-RIGHT", "TOP-LEFT", "BOTTOM-LEFT", "BOTTOM-RIGHT"]
         
-        # 1. TOP-MOST (highest Y, widest)
-        top_mask = ry > (max_y - (max_y - min_y) * 0.3)
-        if np.any(top_mask):
-            top_idx = np.where(top_mask)[0]
-            best = top_idx[np.argmax(dists[top_idx])]
-            checkpoints.append((ry[best], rx[best]))
-            self.get_logger().info(f"   TOP: ({ry[best]},{rx[best]}) w={dists[best]:.1f}")
+        for qname, (y_cond, x_cond) in zip(quad_names, 
+                                            [(lambda y: y >= center_y, lambda x: x >= center_x),
+                                             (lambda y: y >= center_y, lambda x: x < center_x),
+                                             (lambda y: y < center_y, lambda x: x < center_x),
+                                             (lambda y: y < center_y, lambda x: x >= center_x)]):
+            mask = y_cond(ry) & x_cond(rx)
+            if np.any(mask):
+                q_idx = np.where(mask)[0]
+                best = q_idx[np.argmax(dists[q_idx])]
+                cp = (ry[best], rx[best])
+                quadrants.append(cp)
+                self.get_logger().info(f"   {qname}: ({cp[0]},{cp[1]}) w={dists[best]:.1f}")
         
-        # 2. BOTTOM-MOST (lowest Y, widest)
-        bot_mask = ry < (min_y + (max_y - min_y) * 0.3)
-        if np.any(bot_mask):
-            bot_idx = np.where(bot_mask)[0]
-            best = bot_idx[np.argmax(dists[bot_idx])]
-            checkpoints.append((ry[best], rx[best]))
-            self.get_logger().info(f"   BOTTOM: ({ry[best]},{rx[best]}) w={dists[best]:.1f}")
-        
-        # 3. MIDDLE-LEFT (middle Y, left X, widest)
-        mid_mask = (ry > min_y + (max_y - min_y) * 0.3) & (ry < max_y - (max_y - min_y) * 0.3)
-        left_mask = mid_mask & (rx < mid_x)
-        if np.any(left_mask):
-            left_idx = np.where(left_mask)[0]
-            best = left_idx[np.argmax(dists[left_idx])]
-            checkpoints.append((ry[best], rx[best]))
-            self.get_logger().info(f"   MID-LEFT: ({ry[best]},{rx[best]}) w={dists[best]:.1f}")
-        
-        # 4. MIDDLE-RIGHT (middle Y, right X, widest)
-        right_mask = mid_mask & (rx > mid_x)
-        if np.any(right_mask):
-            right_idx = np.where(right_mask)[0]
-            best = right_idx[np.argmax(dists[right_idx])]
-            checkpoints.append((ry[best], rx[best]))
-            self.get_logger().info(f"   MID-RIGHT: ({ry[best]},{rx[best]}) w={dists[best]:.1f}")
-        
-        self.get_logger().info(f"   Selected {len(checkpoints)} checkpoints")
-        return checkpoints
+        self.get_logger().info(f"   Selected {len(quadrants)} checkpoints")
+        return quadrants
     
     def resample_path(self, path, num_points=200):
         """Interpolate path to have exactly num_points evenly spaced"""
