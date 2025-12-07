@@ -13,6 +13,7 @@ from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Float32, Int32
 from geometry_msgs.msg import Point, PoseStamped
 from nav_msgs.msg import OccupancyGrid, Path
+from visualization_msgs.msg import Marker, MarkerArray
 import numpy as np
 import time
 import json
@@ -31,6 +32,8 @@ class TrackMapper(Node):
         self.pub_steering = self.create_publisher(Float32, '/autodrive/roboracer_1/steering_command', 10)
         self.pub_map = self.create_publisher(OccupancyGrid, '/map', 10)
         self.pub_raceline = self.create_publisher(Path, '/raceline_path', 10)
+        self.pub_waypoints = self.create_publisher(MarkerArray, '/waypoint_markers', 10)
+        self.pub_target = self.create_publisher(Marker, '/target_waypoint', 10)
         
         self.sub_lidar = self.create_subscription(LaserScan, '/autodrive/roboracer_1/lidar', self.lidar_cb, qos)
         self.sub_ips = self.create_subscription(Point, '/autodrive/roboracer_1/ips', self.ips_cb, 10)
@@ -443,12 +446,15 @@ Visualization Manager:
             
             # Resample to 200 points
             path_world = np.column_stack((wx, wy))
-            self.raceline = self.resample_path(path_world, 1000)  # More points = smoother!
+            self.raceline = self.resample_path(path_world, 50)  # DEBUG: Less points to see what's happening
             
             self.get_logger().info(f"✅ Raceline generated: {len(self.raceline)} waypoints")
             
             # Calculate curvatures for adaptive speed/lookahead
             self.calculate_curvatures()
+            
+            # Publish waypoint markers to RViz (highlight WP 480-520 in RED)
+            self.publish_waypoint_markers(highlight_range=(480, 520))
             
             # Visualize and save
             self.visualize_raceline(path_pixels, checkpoints)
@@ -582,7 +588,7 @@ Visualization Manager:
         curvatures = np.zeros(n)
         
         # Use 3-point curvature formula
-        step = 5  # Points to skip for smoother curvature
+        step = 1  # Points to skip (reduced for 50 waypoints)
         for i in range(n):
             p1 = self.raceline[(i - step) % n]
             p2 = self.raceline[i]
@@ -611,11 +617,104 @@ Visualization Manager:
                 curvatures[i] = 0
         
         # Smooth curvatures
-        self.curvatures = uniform_filter1d(curvatures, size=50, mode='wrap')
+        self.curvatures = uniform_filter1d(curvatures, size=5, mode='wrap')  # Reduced for 50 waypoints
         
         max_k = np.max(self.curvatures)
         avg_k = np.mean(self.curvatures)
         self.get_logger().info(f"📊 Curvature calculated: max={max_k:.3f}, avg={avg_k:.3f}")
+        
+        # Find problematic waypoints (high curvature OR direction changes)
+        problem_wps = []
+        for i in range(len(self.curvatures)):
+            if self.curvatures[i] > 0.25:  # High curvature
+                problem_wps.append(i)
+        self.get_logger().info(f"⚠️ High curvature waypoints: {len(problem_wps)}")
+    
+    def publish_waypoint_markers(self, highlight_range=None):
+        """Publish waypoints to RViz for debugging"""
+        if self.raceline is None:
+            return
+            
+        marker_array = MarkerArray()
+        
+        # All waypoints as small spheres
+        for i, wp in enumerate(self.raceline):
+            marker = Marker()
+            marker.header.frame_id = "world"
+            marker.header.stamp = self.get_clock().now().to_msg()
+            marker.ns = "waypoints"
+            marker.id = i
+            marker.type = Marker.SPHERE
+            marker.action = Marker.ADD
+            
+            marker.pose.position.x = float(wp[0])
+            marker.pose.position.y = float(wp[1])
+            marker.pose.position.z = 0.05
+            marker.pose.orientation.w = 1.0
+            
+            # Size: bigger for every 100th waypoint
+            if i % 100 == 0:
+                marker.scale.x = 0.15
+                marker.scale.y = 0.15
+                marker.scale.z = 0.15
+            else:
+                marker.scale.x = 0.04
+                marker.scale.y = 0.04
+                marker.scale.z = 0.04
+            
+            # Color: RED for problem region, GREEN otherwise
+            if highlight_range and highlight_range[0] <= i <= highlight_range[1]:
+                marker.color.r = 1.0
+                marker.color.g = 0.0
+                marker.color.b = 0.0
+                marker.color.a = 1.0
+                # Make problem ones bigger
+                marker.scale.x = 0.1
+                marker.scale.y = 0.1
+                marker.scale.z = 0.1
+            elif self.curvatures is not None and self.curvatures[i] > 0.25:
+                # High curvature = YELLOW
+                marker.color.r = 1.0
+                marker.color.g = 1.0
+                marker.color.b = 0.0
+                marker.color.a = 1.0
+                marker.scale.x = 0.08
+                marker.scale.y = 0.08
+                marker.scale.z = 0.08
+            else:
+                marker.color.r = 0.0
+                marker.color.g = 1.0
+                marker.color.b = 0.0
+                marker.color.a = 0.7
+            
+            marker_array.markers.append(marker)
+        
+        # Add text labels for every 100th waypoint
+        for i in range(0, len(self.raceline), 100):
+            marker = Marker()
+            marker.header.frame_id = "world"
+            marker.header.stamp = self.get_clock().now().to_msg()
+            marker.ns = "wp_labels"
+            marker.id = i + 10000
+            marker.type = Marker.TEXT_VIEW_FACING
+            marker.action = Marker.ADD
+            
+            marker.pose.position.x = float(self.raceline[i][0])
+            marker.pose.position.y = float(self.raceline[i][1])
+            marker.pose.position.z = 0.3
+            marker.pose.orientation.w = 1.0
+            
+            marker.scale.z = 0.2
+            marker.color.r = 1.0
+            marker.color.g = 1.0
+            marker.color.b = 1.0
+            marker.color.a = 1.0
+            marker.text = str(i)
+            
+            marker_array.markers.append(marker)
+        
+        self.pub_waypoints.publish(marker_array)
+        self.get_logger().info(f"📍 Published {len(self.raceline)} waypoint markers to /waypoint_markers")
     
     def pure_pursuit(self, ranges, n, center):
         """ULTIMATE Pure Pursuit: Path + Wall Avoidance + Damping + Safety!"""
@@ -637,39 +736,63 @@ Visualization Manager:
         pos = np.array([self.x, self.y])
         num_wps = len(self.raceline)
         
-        search_range = 80
-        best_idx = self.last_wp
-        best_dist = float('inf')
-        
-        for offset in range(-search_range, search_range + 1):
-            idx = (self.last_wp + offset) % num_wps
-            d = np.linalg.norm(self.raceline[idx] - pos)
-            if d < best_dist:
-                best_dist = d
-                best_idx = idx
-        
-        closest = best_idx
-        xte = best_dist
+        # Find ACTUAL closest waypoint (search all)
+        dists = np.linalg.norm(self.raceline - pos, axis=1)
+        closest = np.argmin(dists)
+        xte = dists[closest]
         
         # Update tracker
-        wp_diff = (closest - self.last_wp) % num_wps
-        if wp_diff > num_wps // 2:
-            wp_diff -= num_wps
-        if -15 <= wp_diff <= 80:
-            self.last_wp = closest
+        self.last_wp = closest
         
         # ===== 4. ADAPTIVE LOOKAHEAD =====
+        # Scaled for 50 waypoints (was 1000)
         if self.curvatures is not None:
             curv = self.curvatures[closest]
-            max_curv = 0.35
+            max_curv = 0.25
             curv_factor = min(curv / max_curv, 1.0)
-            lookahead = int(35 - 20 * curv_factor)  # 35 → 15
+            # Base lookahead: 3 (straight) → 1 (tight curve) for 50 points
+            lookahead = int(3 - 2 * curv_factor)
+            lookahead = max(lookahead, 1)
         else:
-            lookahead = 25
+            lookahead = 2
             curv = 0
         
+        # MINIMUM DISTANCE: Target must be at least 0.3m away!
+        MIN_TARGET_DIST = 0.3
         target_idx = (closest + lookahead) % num_wps
         target = self.raceline[target_idx]
+        target_dist = np.linalg.norm(target - pos)
+        
+        # If target is too close, look further ahead (max 10 for 50 waypoints)
+        while target_dist < MIN_TARGET_DIST and lookahead < 10:
+            lookahead += 3
+            target_idx = (closest + lookahead) % num_wps
+            target = self.raceline[target_idx]
+            target_dist = np.linalg.norm(target - pos)
+        
+        # Check if target is in front (angle < 90°)
+        dx_check = target[0] - self.x
+        dy_check = target[1] - self.y
+        angle_to_target = np.arctan2(dy_check, dx_check)
+        angle_diff = angle_to_target - self.yaw
+        if angle_diff > np.pi: angle_diff -= 2*np.pi
+        if angle_diff < -np.pi: angle_diff += 2*np.pi
+        
+        # If target is behind, find one in front
+        if abs(angle_diff) > np.pi * 0.7:  # > 126 degrees
+            for try_la in range(lookahead - 1, 3, -1):
+                try_idx = (closest + try_la) % num_wps
+                try_target = self.raceline[try_idx]
+                dx_t = try_target[0] - self.x
+                dy_t = try_target[1] - self.y
+                ang_t = np.arctan2(dy_t, dx_t) - self.yaw
+                if ang_t > np.pi: ang_t -= 2*np.pi
+                if ang_t < -np.pi: ang_t += 2*np.pi
+                if abs(ang_t) < np.pi * 0.7:
+                    target_idx = try_idx
+                    target = try_target
+                    lookahead = try_la
+                    break
         
         # ===== 5. PATH FOLLOWING STEERING =====
         dx = target[0] - self.x
@@ -680,7 +803,13 @@ Visualization Manager:
         if err > np.pi: err -= 2*np.pi
         if err < -np.pi: err += 2*np.pi
         
-        path_steer = err * 1.2  # Lower gain = less aggressive
+        # STEERING GAIN: Higher in curves, lower on straights
+        if curv > 0.2:
+            gain = 1.2  # More aggressive in curves
+        else:
+            gain = 0.9  # Gentler on straights
+        
+        path_steer = err * gain
         
         # ===== 6. WALL AVOIDANCE STEERING =====
         wall_steer = 0.0
@@ -706,16 +835,25 @@ Visualization Manager:
         
         raw_steer = (1.0 - wall_weight) * path_steer + wall_weight * wall_steer
         
-        # ===== 8. STEERING DAMPING (reduces oscillation!) =====
+        # ===== 8. STEERING: Full range allowed, but damped to prevent oscillation =====
         steer_change = raw_steer - self.last_steer
-        damped_steer = raw_steer - steer_change * 0.4  # 40% damping
         
+        # DAMPING: Less damping in curves (need to turn!), more on straights
+        if curv > 0.15:  # In a curve - allow quick steering changes
+            damping = 0.2
+        else:  # Straight - more damping to prevent oscillation
+            damping = 0.4
+        
+        damped_steer = raw_steer - steer_change * damping
+        
+        # FULL STEERING ALLOWED everywhere!
         steer = np.clip(damped_steer, -self.MAX_STEER, self.MAX_STEER)
+        
         self.last_steer = steer
         
         # ===== 9. ADAPTIVE SPEED =====
         if self.curvatures is not None:
-            look_ahead_curv = int(lookahead * 1.5)
+            look_ahead_curv = max(int(lookahead * 1.5), 2)  # At least 2 for 50 waypoints
             indices = [(closest + i) % num_wps for i in range(look_ahead_curv)]
             upcoming_curv = np.max(self.curvatures[indices])
             curv_factor = min(upcoming_curv / max_curv, 1.0)
@@ -739,17 +877,62 @@ Visualization Manager:
         elif min_side < 0.35:
             speed = min(speed, 0.03)
         
+        if xte > 0.2:
+            speed = min(speed, 0.03)
         if xte > 0.35:
-            speed = min(speed, 0.025)
+            speed = min(speed, 0.02)
+        if xte > 0.5:
+            speed = min(speed, 0.015)  # Very slow when way off!
         
-        # ===== DEBUG =====
-        if self.count % 20 == 0:
+        # ===== DETAILED DEBUG =====
+        angle_deg = np.degrees(err)
+        target_angle_deg = np.degrees(target_angle)
+        yaw_deg = np.degrees(self.yaw)
+        
+        # Only print every 10th frame to reduce spam, but ALWAYS print if something looks wrong
+        # Check if XTE is high OR steering is at max
+        is_problem = xte > 0.3 or abs(steer) > 0.6
+        
+        if self.count % 10 == 0 or is_problem:
+            expected_sign = "L" if err > 0 else "R"
+            actual_sign = "L" if steer > 0 else "R"
+            sign_ok = "✅" if (err > 0) == (steer > 0) or abs(err) < 0.1 else "❌"
+            problem_flag = "⚠️PROB" if is_problem else ""
+            
+            self.get_logger().info(
+                f"🔍 WP:{closest}→{target_idx} | YAW:{yaw_deg:.0f}° TgtAng:{target_angle_deg:.0f}° ERR:{angle_deg:.0f}° | "
+                f"{expected_sign}→{actual_sign}{sign_ok} | XTE:{xte:.2f} | STR:{steer:.2f} {problem_flag}"
+            )
+        
+        # Publish TARGET WAYPOINT as bright purple marker
+        target_marker = Marker()
+        target_marker.header.frame_id = "world"
+        target_marker.header.stamp = self.get_clock().now().to_msg()
+        target_marker.ns = "target"
+        target_marker.id = 0
+        target_marker.type = Marker.SPHERE
+        target_marker.action = Marker.ADD
+        target_marker.pose.position.x = float(target[0])
+        target_marker.pose.position.y = float(target[1])
+        target_marker.pose.position.z = 0.3  # Higher so it's visible
+        target_marker.pose.orientation.w = 1.0
+        target_marker.scale.x = 0.25
+        target_marker.scale.y = 0.25
+        target_marker.scale.z = 0.25
+        target_marker.color.r = 1.0
+        target_marker.color.g = 0.0
+        target_marker.color.b = 1.0  # PURPLE (magenta)
+        target_marker.color.a = 1.0
+        self.pub_target.publish(target_marker)
+        
+        if self.count % 15 == 0:
             curv_str = f"k={curv:.2f}" if self.curvatures is not None else "-"
             self.get_logger().info(
-                f"🏎️ WP:{closest} XTE:{xte:.2f} {curv_str} | "
+                f"🏎️ WP:{closest} Tgt:{target_idx} LA:{lookahead} XTE:{xte:.2f} Ang:{angle_deg:+.0f}° {curv_str} | "
                 f"L:{left_min:.2f} R:{right_min:.2f} F:{front:.2f} | "
-                f"Spd:{speed:.3f} Str:{steer:.2f} w:{wall_weight:.1f}"
+                f"Spd:{speed:.3f} Str:{steer:.2f}"
             )
+        
         
         return speed, steer
     
@@ -780,8 +963,23 @@ Visualization Manager:
         dx, dy = msg.x - self.prev_x, msg.y - self.prev_y
         dist_moved = np.sqrt(dx*dx + dy*dy)
         
-        if dist_moved > 0.001:
-            self.yaw = 0.85 * self.yaw + 0.15 * np.arctan2(dy, dx)
+        if dist_moved > 0.005:  # Only update yaw if actually moving (was 0.001)
+            new_yaw = np.arctan2(dy, dx)
+            
+            # LIMIT YAW CHANGE RATE - max 10° per frame to prevent spinning detection
+            yaw_diff = new_yaw - self.yaw
+            if yaw_diff > np.pi: yaw_diff -= 2*np.pi
+            if yaw_diff < -np.pi: yaw_diff += 2*np.pi
+            
+            max_yaw_change = np.radians(15)  # Max 15° per frame
+            yaw_diff = np.clip(yaw_diff, -max_yaw_change, max_yaw_change)
+            
+            self.yaw = self.yaw + yaw_diff * 0.3  # Slower smoothing (was 0.15 direct)
+            
+            # Keep yaw in [-pi, pi]
+            if self.yaw > np.pi: self.yaw -= 2*np.pi
+            if self.yaw < -np.pi: self.yaw += 2*np.pi
+            
             self.heading_history.append(self.yaw)
             if len(self.heading_history) > 40:
                 self.heading_history.pop(0)

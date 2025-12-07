@@ -64,6 +64,8 @@ docker exec -it roboracer_devkit_comp bash
 ```
 Then inside:
 ```bash
+# FIRST TIME ONLY: Install dependencies (see below)
+
 source /opt/ros/humble/setup.bash
 cd /home/autodrive_devkit/roboracer_ws
 colcon build --packages-select wall_follower
@@ -71,6 +73,31 @@ source install/setup.bash
 
 # Run your driver
 ros2 run wall_follower slam_driver
+```
+
+---
+
+## 🔧 First-Time Container Setup (Dependencies)
+
+**Run this ONCE when starting a fresh container:**
+
+```bash
+# Install Python dependencies for track_mapper
+pip3 install scikit-image scipy
+
+# OR if pip3 doesn't work:
+apt-get update && apt-get install -y python3-skimage python3-scipy
+```
+
+### What Each Dependency Does:
+| Package | Used For |
+|---------|----------|
+| `scikit-image` | Skeletonization, path finding (`skimage.graph.route_through_array`) |
+| `scipy` | Distance transform, morphological ops, smoothing |
+
+### Quick One-Liner:
+```bash
+pip3 install scikit-image scipy && echo "✅ Dependencies installed!"
 ```
 
 ---
@@ -122,6 +149,9 @@ docker exec -it roboracer_devkit bash
 ```
 Then inside:
 ```bash
+# FIRST TIME ONLY: Install dependencies
+pip3 install scikit-image scipy
+
 source /opt/ros/humble/setup.bash
 cd /home/autodrive_devkit/roboracer_ws
 colcon build --packages-select wall_follower
@@ -130,7 +160,10 @@ source install/setup.bash
 # Option A: Simple gap follower (qualification)
 ros2 run wall_follower slam_driver
 
-# Option B: Full racing stack with MPC + RViz
+# Option B: Track mapper with pure pursuit
+ros2 run wall_follower track_mapper
+
+# Option C: Full racing stack with MPC + RViz
 ros2 launch wall_follower racing.launch.py
 ```
 
