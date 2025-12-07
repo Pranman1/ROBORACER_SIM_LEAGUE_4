@@ -49,13 +49,12 @@ def get_costmap(grid):
     return cost_map, dist_map
 
 def get_quadrant_checkpoints(dist_map):
-    """Find 4 checkpoints distributed by ARC LENGTH around the track"""
-    print("📍 Finding checkpoints spaced by arc length...")
+    """Find 4 checkpoints: TOP, BOTTOM, MIDDLE-LEFT, MIDDLE-RIGHT"""
+    print("📍 Finding TOP/BOTTOM/LEFT/RIGHT checkpoints...")
     from scipy.ndimage import maximum_filter, gaussian_filter
-    from scipy.spatial.distance import cdist
     
     # Find centerline/ridge points (high distance values)
-    threshold = np.percentile(dist_map[dist_map > 0], 60)
+    threshold = np.percentile(dist_map[dist_map > 0], 50)
     
     # Smooth distance map
     dist_smooth = gaussian_filter(dist_map, sigma=2)
@@ -72,36 +71,49 @@ def get_quadrant_checkpoints(dist_map):
     
     print(f"   Found {len(rx)} ridge points")
     
-    # Sort by ANGLE from center to get circular ordering
-    center_x, center_y = np.mean(rx), np.mean(ry)
-    angles = np.arctan2(ry - center_y, rx - center_x)
-    sorted_idx = np.argsort(angles)
+    # Get distances for all ridge points
+    dists = np.array([dist_map[ry[i], rx[i]] for i in range(len(rx))])
     
-    # Reorder points by angle
-    rx_ordered = rx[sorted_idx]
-    ry_ordered = ry[sorted_idx]
+    # Find bounds
+    min_y, max_y = np.min(ry), np.max(ry)
+    min_x, max_x = np.min(rx), np.max(rx)
+    mid_y = (min_y + max_y) / 2
+    mid_x = (min_x + max_x) / 2
     
-    # Calculate cumulative arc length
-    arc_length = np.zeros(len(rx_ordered))
-    for i in range(1, len(rx_ordered)):
-        dx = rx_ordered[i] - rx_ordered[i-1]
-        dy = ry_ordered[i] - ry_ordered[i-1]
-        arc_length[i] = arc_length[i-1] + np.sqrt(dx**2 + dy**2)
-    
-    total_length = arc_length[-1]
-    print(f"   Total path length: {total_length:.1f} pixels")
-    
-    # Pick 4 points at 0%, 20%, 50%, 80% of arc length (better distribution!)
-    target_lengths = [0, 0.20*total_length, 0.5*total_length, 0.80*total_length]
     checkpoints = []
-    checkpoint_names = ["Start (0%)", "20%", "Half (50%)", "80%"]
     
-    for target, name in zip(target_lengths, checkpoint_names):
-        # Find closest point to target arc length
-        idx = np.argmin(np.abs(arc_length - target))
-        cp = (ry_ordered[idx], rx_ordered[idx])
-        checkpoints.append(cp)
-        print(f"   ✓ {name}: ({cp[0]},{cp[1]}) @ {arc_length[idx]:.1f}px dist:{dist_map[cp[0], cp[1]]:.1f}")
+    # 1. TOP-MOST (highest Y, widest)
+    top_mask = ry > (max_y - (max_y - min_y) * 0.3)  # Top 30%
+    if np.any(top_mask):
+        top_idx = np.where(top_mask)[0]
+        best = top_idx[np.argmax(dists[top_idx])]
+        checkpoints.append((ry[best], rx[best]))
+        print(f"   ✓ TOP: ({ry[best]},{rx[best]}) width={dists[best]:.1f}")
+    
+    # 2. BOTTOM-MOST (lowest Y, widest)
+    bot_mask = ry < (min_y + (max_y - min_y) * 0.3)  # Bottom 30%
+    if np.any(bot_mask):
+        bot_idx = np.where(bot_mask)[0]
+        best = bot_idx[np.argmax(dists[bot_idx])]
+        checkpoints.append((ry[best], rx[best]))
+        print(f"   ✓ BOTTOM: ({ry[best]},{rx[best]}) width={dists[best]:.1f}")
+    
+    # 3. MIDDLE-LEFT (middle Y, leftmost X, widest)
+    mid_mask = (ry > min_y + (max_y - min_y) * 0.3) & (ry < max_y - (max_y - min_y) * 0.3)
+    left_mask = mid_mask & (rx < mid_x)
+    if np.any(left_mask):
+        left_idx = np.where(left_mask)[0]
+        best = left_idx[np.argmax(dists[left_idx])]
+        checkpoints.append((ry[best], rx[best]))
+        print(f"   ✓ MID-LEFT: ({ry[best]},{rx[best]}) width={dists[best]:.1f}")
+    
+    # 4. MIDDLE-RIGHT (middle Y, rightmost X, widest)
+    right_mask = mid_mask & (rx > mid_x)
+    if np.any(right_mask):
+        right_idx = np.where(right_mask)[0]
+        best = right_idx[np.argmax(dists[right_idx])]
+        checkpoints.append((ry[best], rx[best]))
+        print(f"   ✓ MID-RIGHT: ({ry[best]},{rx[best]}) width={dists[best]:.1f}")
     
     print(f"\n   Total checkpoints: {len(checkpoints)}")
     return checkpoints

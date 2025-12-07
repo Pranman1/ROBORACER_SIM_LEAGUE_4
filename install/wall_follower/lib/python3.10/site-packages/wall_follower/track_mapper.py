@@ -66,6 +66,9 @@ class TrackMapper(Node):
         self.current_steer = 0.0
         self.start_x, self.start_y = None, None  # Track start position for loop closure
         self.loop_closed = False
+        self.total_distance = 0.0  # Track distance to ensure full lap
+        self.passed_start_once = False  # Did we complete one lap?
+        self.dist_after_pass = 0.0  # Extra distance after passing start
         
         # ===== PURE PURSUIT =====
         self.raceline = None  # Will store waypoints after lap 1
@@ -444,11 +447,11 @@ Visualization Manager:
             return False
     
     def get_arc_length_checkpoints(self, dist_map):
-        """Find 4 checkpoints distributed by ARC LENGTH around the track"""
+        """Find 4 checkpoints: TOP, BOTTOM, MIDDLE-LEFT, MIDDLE-RIGHT"""
         from scipy.ndimage import maximum_filter, gaussian_filter
         
         # Find centerline/ridge points (high distance values)
-        threshold = np.percentile(dist_map[dist_map > 0], 60)
+        threshold = np.percentile(dist_map[dist_map > 0], 50)
         
         # Smooth distance map
         dist_smooth = gaussian_filter(dist_map, sigma=2)
@@ -465,36 +468,51 @@ Visualization Manager:
         
         self.get_logger().info(f"   Found {len(rx)} ridge points")
         
-        # Sort by ANGLE from center to get circular ordering
-        center_x, center_y = np.mean(rx), np.mean(ry)
-        angles = np.arctan2(ry - center_y, rx - center_x)
-        sorted_idx = np.argsort(angles)
+        # Get distances for all ridge points
+        dists = np.array([dist_map[ry[i], rx[i]] for i in range(len(rx))])
         
-        # Reorder points by angle
-        rx_ordered = rx[sorted_idx]
-        ry_ordered = ry[sorted_idx]
+        # Find bounds
+        min_y, max_y = np.min(ry), np.max(ry)
+        min_x, max_x = np.min(rx), np.max(rx)
+        mid_y = (min_y + max_y) / 2
+        mid_x = (min_x + max_x) / 2
         
-        # Calculate cumulative arc length
-        arc_length = np.zeros(len(rx_ordered))
-        for i in range(1, len(rx_ordered)):
-            dx = rx_ordered[i] - rx_ordered[i-1]
-            dy = ry_ordered[i] - ry_ordered[i-1]
-            arc_length[i] = arc_length[i-1] + np.sqrt(dx**2 + dy**2)
-        
-        total_length = arc_length[-1]
-        self.get_logger().info(f"   Total arc length: {total_length:.1f} pixels")
-        
-        # Pick 4 points at 0%, 20%, 50%, 80% of arc length
-        target_lengths = [0, 0.20*total_length, 0.5*total_length, 0.80*total_length]
         checkpoints = []
         
-        for target in target_lengths:
-            # Find closest point to target arc length
-            idx = np.argmin(np.abs(arc_length - target))
-            cp = (ry_ordered[idx], rx_ordered[idx])
-            checkpoints.append(cp)
+        # 1. TOP-MOST (highest Y, widest)
+        top_mask = ry > (max_y - (max_y - min_y) * 0.3)
+        if np.any(top_mask):
+            top_idx = np.where(top_mask)[0]
+            best = top_idx[np.argmax(dists[top_idx])]
+            checkpoints.append((ry[best], rx[best]))
+            self.get_logger().info(f"   TOP: ({ry[best]},{rx[best]}) w={dists[best]:.1f}")
         
-        self.get_logger().info(f"   Selected {len(checkpoints)} arc-length checkpoints")
+        # 2. BOTTOM-MOST (lowest Y, widest)
+        bot_mask = ry < (min_y + (max_y - min_y) * 0.3)
+        if np.any(bot_mask):
+            bot_idx = np.where(bot_mask)[0]
+            best = bot_idx[np.argmax(dists[bot_idx])]
+            checkpoints.append((ry[best], rx[best]))
+            self.get_logger().info(f"   BOTTOM: ({ry[best]},{rx[best]}) w={dists[best]:.1f}")
+        
+        # 3. MIDDLE-LEFT (middle Y, left X, widest)
+        mid_mask = (ry > min_y + (max_y - min_y) * 0.3) & (ry < max_y - (max_y - min_y) * 0.3)
+        left_mask = mid_mask & (rx < mid_x)
+        if np.any(left_mask):
+            left_idx = np.where(left_mask)[0]
+            best = left_idx[np.argmax(dists[left_idx])]
+            checkpoints.append((ry[best], rx[best]))
+            self.get_logger().info(f"   MID-LEFT: ({ry[best]},{rx[best]}) w={dists[best]:.1f}")
+        
+        # 4. MIDDLE-RIGHT (middle Y, right X, widest)
+        right_mask = mid_mask & (rx > mid_x)
+        if np.any(right_mask):
+            right_idx = np.where(right_mask)[0]
+            best = right_idx[np.argmax(dists[right_idx])]
+            checkpoints.append((ry[best], rx[best]))
+            self.get_logger().info(f"   MID-RIGHT: ({ry[best]},{rx[best]}) w={dists[best]:.1f}")
+        
+        self.get_logger().info(f"   Selected {len(checkpoints)} checkpoints")
         return checkpoints
     
     def resample_path(self, path, num_points=200):
@@ -636,52 +654,37 @@ Visualization Manager:
 
     def ips_cb(self, msg):
         dx, dy = msg.x - self.prev_x, msg.y - self.prev_y
-        if dx*dx + dy*dy > 0.0001:
+        dist_moved = np.sqrt(dx*dx + dy*dy)
+        
+        if dist_moved > 0.001:
             self.yaw = 0.85 * self.yaw + 0.15 * np.arctan2(dy, dx)
             self.heading_history.append(self.yaw)
             if len(self.heading_history) > 40:
                 self.heading_history.pop(0)
+            
+            # Track total distance traveled (after start recorded)
+            if self.start_x is not None:
+                self.total_distance += dist_moved
+        
         self.prev_x, self.prev_y = self.x, self.y
         self.x, self.y = msg.x, msg.y
         
         # Record start position after startup
         if self.start_x is None and time.time() - self.start_time > self.STARTUP_DELAY + 3.0:
             self.start_x, self.start_y = self.x, self.y
-            self.get_logger().info(f"Start position: ({self.start_x:.2f}, {self.start_y:.2f})")
+            self.total_distance = 0.0
+            self.get_logger().info(f"📍 Start: ({self.start_x:.2f}, {self.start_y:.2f})")
 
     def lap_cb(self, msg):
         if msg.data > self.lap:
             self.lap = msg.data
             self.get_logger().info(f"*** LAP {self.lap} COMPLETE! ***")
             
-            # Trigger cleanup + raceline after lap 1!
-            if self.lap == 1 and not self.loop_closed:
-                self.loop_closed = True
-                self.mapping_active = False
-                self.stopped = True
-                
-                self.get_logger().info("🔄 LAP 1 DONE! Processing map...")
-                self.publish(0.0, 0.0)
-                
-                self.get_logger().info("🧹 Cleaning up map...")
-                self.cleanup_map()
-                
-                self.get_logger().info("💾 Saving map...")
-                self.save_map()
-                
-                self.get_logger().info("🏁 Generating raceline...")
-                if self.generate_raceline():
-                    self.pursuing = True
-                    self.stopped = False
-                    self.get_logger().info("✅ Switching to PURE PURSUIT mode!")
-                    self.get_logger().info(f"   Current car pos: ({self.x:.3f}, {self.y:.3f})")
-                    # Find closest waypoint to current position
-                    dists = np.linalg.norm(self.raceline - np.array([self.x, self.y]), axis=1)
-                    closest = np.argmin(dists)
-                    self.get_logger().info(f"   Closest WP: {closest} @({self.raceline[closest][0]:.3f}, {self.raceline[closest][1]:.3f}) Dist:{dists[closest]:.3f}m")
-                    self.get_logger().info("   Watch RViz /raceline_path topic for GREEN LINE!")
-                else:
-                    self.get_logger().error("❌ Failed to generate raceline, staying stopped")
+            # Lap 1 done - DON'T stop yet! Drive 5m more to fill gaps!
+            if self.lap == 1 and not self.passed_start_once:
+                self.passed_start_once = True
+                self.dist_after_pass = self.total_distance
+                self.get_logger().info(f"📍 LAP 1 @ {self.total_distance:.1f}m! Driving 5m more to fill gaps...")
             
             if self.lap >= self.max_lap:
                 self.get_logger().info(f"=== {self.max_lap} LAPS DONE! SUCCESS! ===")
@@ -738,16 +741,25 @@ Visualization Manager:
         # Update map (doesn't affect controls!)
         self.update_map(ranges, msg.angle_min, msg.angle_increment)
         
-        # Check for loop closure
+        # Check for loop closure - drive a bit PAST start before stopping!
         if self.mapping_active and self.start_x is not None and not self.loop_closed:
             dist_from_start = np.sqrt((self.x - self.start_x)**2 + (self.y - self.start_y)**2)
-            # If we've moved far and come back near start
-            if elapsed > self.STARTUP_DELAY + 20.0 and dist_from_start < 0.6:
+            
+            # First: detect when we complete a lap (went far, came back close)
+            if not self.passed_start_once:
+                if elapsed > self.STARTUP_DELAY + 25.0 and self.total_distance > 15.0 and dist_from_start < 0.8:
+                    self.passed_start_once = True
+                    self.dist_after_pass = self.total_distance  # Record distance at this moment
+                    self.get_logger().info(f"📍 Lap complete @ {self.total_distance:.1f}m! Driving 5m more...")
+            
+            # Close loop after driving 5m past the start point
+            if self.passed_start_once and (self.total_distance - self.dist_after_pass) > 5.0:
                 self.loop_closed = True
                 self.mapping_active = False
                 self.stopped = True
                 
-                self.get_logger().info("🔄 LOOP CLOSED! Stopping...")
+                self.get_logger().info(f"🔄 LOOP CLOSED! Time:{elapsed:.1f}s Dist:{self.total_distance:.1f}m FromStart:{dist_from_start:.2f}m")
+                self.get_logger().info("🛑 Stopping...")
                 self.publish(0.0, 0.0)
                 
                 self.get_logger().info("🧹 Cleaning up map...")
