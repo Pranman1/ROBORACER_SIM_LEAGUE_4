@@ -1,0 +1,31 @@
+[0.322s] Invoking command in '/home/autodrive_devkit/roboracer_ws/src/wall_follower': PYTHONPATH=/home/autodrive_devkit/roboracer_ws/build/wall_follower/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/wall_follower build --build-base /home/autodrive_devkit/roboracer_ws/build/wall_follower/build install --record /home/autodrive_devkit/roboracer_ws/build/wall_follower/install.log --single-version-externally-managed install_data
+[0.439s] running egg_info
+[0.439s] writing ../../build/wall_follower/wall_follower.egg-info/PKG-INFO
+[0.440s] writing dependency_links to ../../build/wall_follower/wall_follower.egg-info/dependency_links.txt
+[0.440s] writing entry points to ../../build/wall_follower/wall_follower.egg-info/entry_points.txt
+[0.440s] writing requirements to ../../build/wall_follower/wall_follower.egg-info/requires.txt
+[0.440s] writing top-level names to ../../build/wall_follower/wall_follower.egg-info/top_level.txt
+[0.441s] reading manifest file '../../build/wall_follower/wall_follower.egg-info/SOURCES.txt'
+[0.441s] writing manifest file '../../build/wall_follower/wall_follower.egg-info/SOURCES.txt'
+[0.441s] running build
+[0.441s] running build_py
+[0.442s] running install
+[0.442s] running install_lib
+[0.443s] running install_data
+[0.443s] running install_egg_info
+[0.444s] removing '/home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages/wall_follower-0.0.0-py3.10.egg-info' (and everything under it)
+[0.447s] Copying ../../build/wall_follower/wall_follower.egg-info to /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages/wall_follower-0.0.0-py3.10.egg-info
+[0.447s] running install_scripts
+[0.460s] Installing disparity_extender script to /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/wall_follower
+[0.461s] Installing ftg_driver script to /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/wall_follower
+[0.461s] Installing global_planner script to /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/wall_follower
+[0.461s] Installing local_planner script to /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/wall_follower
+[0.461s] Installing map_driver script to /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/wall_follower
+[0.461s] Installing mpc_controller script to /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/wall_follower
+[0.461s] Installing path_racer script to /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/wall_follower
+[0.461s] Installing rw_follower script to /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/wall_follower
+[0.461s] Installing slam_driver script to /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/wall_follower
+[0.461s] Installing tf_broadcaster script to /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/wall_follower
+[0.461s] Installing track_mapper script to /home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/wall_follower
+[0.461s] writing list of installed files to '/home/autodrive_devkit/roboracer_ws/build/wall_follower/install.log'
+[0.476s] Invoked command in '/home/autodrive_devkit/roboracer_ws/src/wall_follower' returned '0': PYTHONPATH=/home/autodrive_devkit/roboracer_ws/build/wall_follower/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/autodrive_devkit/roboracer_ws/install/wall_follower/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/wall_follower build --build-base /home/autodrive_devkit/roboracer_ws/build/wall_follower/build install --record /home/autodrive_devkit/roboracer_ws/build/wall_follower/install.log --single-version-externally-managed install_data

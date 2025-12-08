@@ -86,8 +86,9 @@ class TrackMapper(Node):
         # Steering damping
         self.last_steer = 0.0
         
-        # CRASH FALLBACK: If we crash, use wall follower forever
+        # CRASH FALLBACK: If we crash 3+ times, use wall follower forever
         self.pp_crashed = False
+        self.crash_count = 0
         
         self.RESOLUTION = 0.05
         self.MAP_SIZE = 30.0
@@ -730,11 +731,8 @@ Visualization Manager:
         right_min = float(np.min(ranges[center-80:center-40]))  # Right
         front = float(np.min(ranges[center-25:center+25]))      # Front
         
-        # ===== 2. CRASH DETECTION =====
-        if front < 0.15:
-            self.pp_crashed = True
-            self.get_logger().warn("💥 CRASH! Switching to wall follower permanently!")
-            return None, None
+        # ===== 2. CRASH DETECTION (position teleport = reset from crash) =====
+        # Skip - handled in ips_cb now
         
         # ===== 3. FIND CLOSEST WAYPOINT =====
         pos = np.array([self.x, self.y])
@@ -983,6 +981,14 @@ Visualization Manager:
     def ips_cb(self, msg):
         dx, dy = msg.x - self.prev_x, msg.y - self.prev_y
         dist_moved = np.sqrt(dx*dx + dy*dy)
+        
+        # CRASH DETECTION: Position teleport >1m = car reset from crash
+        if dist_moved > 1.0 and self.pursuing:
+            self.crash_count += 1
+            self.get_logger().error(f"💥💥💥 CRASH #{self.crash_count}! (teleported {dist_moved:.1f}m) 💥💥💥")
+            if self.crash_count >= 3:
+                self.pp_crashed = True
+                self.get_logger().error("🛡️🛡️🛡️ 3+ CRASHES! WALL FOLLOWER MODE! 🛡️🛡️🛡️")
         
         if dist_moved > 0.005:  # Only update yaw if actually moving (was 0.001)
             new_yaw = np.arctan2(dy, dx)
