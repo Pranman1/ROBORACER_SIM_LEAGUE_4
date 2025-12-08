@@ -79,9 +79,9 @@ class TrackMapper(Node):
         self.pursuing = False  # Switch from wall follow to pure pursuit
         self.last_wp = 0  # Track waypoint progression
         
-        # Speed limits (tunable!)
-        self.PP_MAX_SPEED = 0.06  # 6 cm/s on straights
-        self.PP_MIN_SPEED = 0.02  # 2 cm/s in tight turns
+        # Speed limits - AGGRESSIVE!
+        self.PP_MAX_SPEED = 0.15  # 15 cm/s on straights (VERY FAST!)
+        self.PP_MIN_SPEED = 0.05  # 5 cm/s in tight turns (still moving!)
         
         # Steering damping
         self.last_steer = 0.0
@@ -446,7 +446,7 @@ Visualization Manager:
             
             # Resample to 200 points
             path_world = np.column_stack((wx, wy))
-            self.raceline = self.resample_path(path_world, 50)  # DEBUG: Less points to see what's happening
+            self.raceline = self.resample_path(path_world, 300)  # 300 points for smooth + fast
             
             self.get_logger().info(f"✅ Raceline generated: {len(self.raceline)} waypoints")
             
@@ -588,7 +588,7 @@ Visualization Manager:
         curvatures = np.zeros(n)
         
         # Use 3-point curvature formula
-        step = 1  # Points to skip (reduced for 50 waypoints)
+        step = 3  # Points to skip for 300 waypoints
         for i in range(n):
             p1 = self.raceline[(i - step) % n]
             p2 = self.raceline[i]
@@ -617,7 +617,7 @@ Visualization Manager:
                 curvatures[i] = 0
         
         # Smooth curvatures
-        self.curvatures = uniform_filter1d(curvatures, size=5, mode='wrap')  # Reduced for 50 waypoints
+        self.curvatures = uniform_filter1d(curvatures, size=20, mode='wrap')  # Smooth for 300 waypoints
         
         max_k = np.max(self.curvatures)
         avg_k = np.mean(self.curvatures)
@@ -745,26 +745,26 @@ Visualization Manager:
         self.last_wp = closest
         
         # ===== 4. ADAPTIVE LOOKAHEAD =====
-        # Scaled for 50 waypoints (was 1000)
+        # Straights: far ahead (smooth), Turns: closer (precise!)
         if self.curvatures is not None:
             curv = self.curvatures[closest]
             max_curv = 0.25
             curv_factor = min(curv / max_curv, 1.0)
-            # Base lookahead: 3 (straight) → 1 (tight curve) for 50 points
-            lookahead = int(3 - 2 * curv_factor)
-            lookahead = max(lookahead, 1)
+            # Straights: 18, Tight turns: 8 (closer = won't hit wall)
+            lookahead = int(18 - 10 * curv_factor)  # 18 → 8
+            lookahead = max(lookahead, 6)
         else:
-            lookahead = 2
+            lookahead = 12
             curv = 0
         
-        # MINIMUM DISTANCE: Target must be at least 0.3m away!
-        MIN_TARGET_DIST = 0.3
+        # MINIMUM DISTANCE: Target must be at least 0.4m away for stability
+        MIN_TARGET_DIST = 0.4
         target_idx = (closest + lookahead) % num_wps
         target = self.raceline[target_idx]
         target_dist = np.linalg.norm(target - pos)
         
-        # If target is too close, look further ahead (max 10 for 50 waypoints)
-        while target_dist < MIN_TARGET_DIST and lookahead < 10:
+        # If target is too close, look further ahead
+        while target_dist < MIN_TARGET_DIST and lookahead < 40:
             lookahead += 3
             target_idx = (closest + lookahead) % num_wps
             target = self.raceline[target_idx]
@@ -803,29 +803,38 @@ Visualization Manager:
         if err > np.pi: err -= 2*np.pi
         if err < -np.pi: err += 2*np.pi
         
-        # STEERING GAIN: Higher in curves, lower on straights
-        if curv > 0.2:
-            gain = 1.2  # More aggressive in curves
+        # STEERING GAIN: Based on situation
+        if curv > 0.15:
+            gain = 1.3  # Aggressive in curves
         else:
-            gain = 0.9  # Gentler on straights
+            gain = 0.5  # VERY gentle on straights - no oscillation!
         
         path_steer = err * gain
         
+        # TIGHT CORNER LOGIC: If front wall is close, turn HARD!
+        if front < 1.0 and curv > 0.1:
+            # Emergency: wall ahead in a curve - maximize turn!
+            if err > 0:
+                path_steer = max(path_steer, 0.5)  # Force left
+            else:
+                path_steer = min(path_steer, -0.5)  # Force right
+        
         # ===== 6. WALL AVOIDANCE STEERING =====
         wall_steer = 0.0
-        wall_thresh = 0.45
+        wall_thresh = 0.5  # Start avoiding at 50cm
         
         if left_min < wall_thresh:
-            wall_steer -= (wall_thresh - left_min) * 2.0  # Steer right
+            wall_steer -= (wall_thresh - left_min) * 2.5  # Steer right (stronger!)
         if right_min < wall_thresh:
-            wall_steer += (wall_thresh - right_min) * 2.0  # Steer left
+            wall_steer += (wall_thresh - right_min) * 2.5  # Steer left (stronger!)
         
-        # Front wall emergency
-        if front < 0.5:
+        # Front wall - AGGRESSIVE turn to avoid!
+        if front < 0.6:
+            turn_force = (0.6 - front) * 1.5  # Stronger as wall gets closer
             if left_min < right_min:
-                wall_steer -= 0.4
+                wall_steer -= turn_force  # Turn right (away from left wall)
             else:
-                wall_steer += 0.4
+                wall_steer += turn_force  # Turn left (away from right wall)
         
         # ===== 7. BLEND PATH + WALL AVOIDANCE =====
         min_side = min(left_min, right_min)
@@ -838,11 +847,11 @@ Visualization Manager:
         # ===== 8. STEERING: Full range allowed, but damped to prevent oscillation =====
         steer_change = raw_steer - self.last_steer
         
-        # DAMPING: Less damping in curves (need to turn!), more on straights
-        if curv > 0.15:  # In a curve - allow quick steering changes
-            damping = 0.2
-        else:  # Straight - more damping to prevent oscillation
-            damping = 0.4
+        # DAMPING: Minimal in curves, HEAVY on straights
+        if curv > 0.15:  # In a curve - need to turn!
+            damping = 0.1
+        else:  # Straight - HEAVY damping to kill oscillation
+            damping = 0.6
         
         damped_steer = raw_steer - steer_change * damping
         
@@ -853,55 +862,48 @@ Visualization Manager:
         
         # ===== 9. ADAPTIVE SPEED =====
         if self.curvatures is not None:
-            look_ahead_curv = max(int(lookahead * 1.5), 2)  # At least 2 for 50 waypoints
+            # Don't look too far ahead - slow down LATE, not early!
+            look_ahead_curv = max(int(lookahead), 8)
             indices = [(closest + i) % num_wps for i in range(look_ahead_curv)]
             upcoming_curv = np.max(self.curvatures[indices])
             curv_factor = min(upcoming_curv / max_curv, 1.0)
-            speed = self.PP_MAX_SPEED - (self.PP_MAX_SPEED - self.PP_MIN_SPEED) * curv_factor
+            
+            # Speed: FAST always, only slow in TIGHT turns
+            # Use curv_factor^2 so we only slow for really tight turns
+            speed = self.PP_MAX_SPEED - (self.PP_MAX_SPEED - self.PP_MIN_SPEED) * (curv_factor ** 1.5)
         else:
-            speed = 0.04
+            speed = 0.10
         
-        # Reduce for steering
-        speed *= (1.0 - abs(steer) / self.MAX_STEER * 0.35)
+        # Reduce speed when steering hard (prevents slipping!)
+        steer_factor = abs(steer) / self.MAX_STEER
+        speed *= (1.0 - steer_factor * 0.5)  # Up to 50% reduction when max steer
         
-        # ===== 10. SAFETY LIMITS =====
-        if front < 0.3:
-            speed = min(speed, 0.015)
-        elif front < 0.5:
-            speed = min(speed, 0.025)
-        elif front < 0.7:
-            speed = min(speed, 0.035)
-        
-        if min_side < 0.25:
-            speed = min(speed, 0.02)
-        elif min_side < 0.35:
+        # ===== 10. SAFETY LIMITS (less aggressive!) =====
+        if front < 0.25:
             speed = min(speed, 0.03)
+        elif front < 0.4:
+            speed = min(speed, 0.05)
         
-        if xte > 0.2:
+        if min_side < 0.2:
+            speed = min(speed, 0.04)
+        
+        if xte > 0.4:
+            speed = min(speed, 0.05)
+        if xte > 0.6:
             speed = min(speed, 0.03)
-        if xte > 0.35:
-            speed = min(speed, 0.02)
-        if xte > 0.5:
-            speed = min(speed, 0.015)  # Very slow when way off!
         
         # ===== DETAILED DEBUG =====
         angle_deg = np.degrees(err)
         target_angle_deg = np.degrees(target_angle)
         yaw_deg = np.degrees(self.yaw)
         
-        # Only print every 10th frame to reduce spam, but ALWAYS print if something looks wrong
-        # Check if XTE is high OR steering is at max
-        is_problem = xte > 0.3 or abs(steer) > 0.6
+        # Print every 20 frames or if there's a problem
+        is_problem = xte > 0.4 or abs(steer) > 0.65
         
-        if self.count % 10 == 0 or is_problem:
-            expected_sign = "L" if err > 0 else "R"
-            actual_sign = "L" if steer > 0 else "R"
-            sign_ok = "✅" if (err > 0) == (steer > 0) or abs(err) < 0.1 else "❌"
-            problem_flag = "⚠️PROB" if is_problem else ""
-            
+        if self.count % 20 == 0 or is_problem:
+            problem_flag = "⚠️" if is_problem else ""
             self.get_logger().info(
-                f"🔍 WP:{closest}→{target_idx} | YAW:{yaw_deg:.0f}° TgtAng:{target_angle_deg:.0f}° ERR:{angle_deg:.0f}° | "
-                f"{expected_sign}→{actual_sign}{sign_ok} | XTE:{xte:.2f} | STR:{steer:.2f} {problem_flag}"
+                f"🏎️ WP:{closest} k={curv:.2f} | XTE:{xte:.2f}m | Spd:{speed:.3f} Str:{steer:.2f} {problem_flag}"
             )
         
         # Publish TARGET WAYPOINT as bright purple marker
