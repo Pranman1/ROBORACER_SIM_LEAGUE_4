@@ -401,7 +401,7 @@ Visualization Manager:
             
             dist_map = distance_transform_edt(binary_track)
             max_dist = np.max(dist_map)
-            cost_map = max_dist - dist_map
+            cost_map = (max_dist - dist_map) ** 1.5  # Penalize near-wall paths MORE
             cost_map[self.grid != 0] = np.inf
             
             # Find ridge/centerline checkpoints spaced by arc length
@@ -522,6 +522,10 @@ Visualization Manager:
         
         x_new = np.interp(new_dists, cumulative_dist, path[:,0])
         y_new = np.interp(new_dists, cumulative_dist, path[:,1])
+        
+        # Smooth to spread out sharp turns (bigger window = gentler curves)
+        x_new = uniform_filter1d(x_new, size=25, mode='wrap')
+        y_new = uniform_filter1d(y_new, size=25, mode='wrap')
         
         return np.column_stack((x_new, y_new))
     
