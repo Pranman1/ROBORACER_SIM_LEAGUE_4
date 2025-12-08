@@ -847,11 +847,11 @@ Visualization Manager:
         # ===== 8. STEERING: Full range allowed, but damped to prevent oscillation =====
         steer_change = raw_steer - self.last_steer
         
-        # DAMPING: Minimal in curves, HEAVY on straights
+        # DAMPING: Minimal in curves, VERY HEAVY on straights
         if curv > 0.15:  # In a curve - need to turn!
-            damping = 0.1
-        else:  # Straight - HEAVY damping to kill oscillation
-            damping = 0.6
+            damping = 0.09
+        else:  # Straight - VERY HEAVY damping to kill oscillation
+            damping = 0.75
         
         damped_steer = raw_steer - steer_change * damping
         
