@@ -803,16 +803,25 @@ Visualization Manager:
         if err > np.pi: err -= 2*np.pi
         if err < -np.pi: err += 2*np.pi
         
-        # STEERING STRATEGY: Pure pursuit in curves, GAP FOLLOW on straights!
+        # STEERING GAIN: Based on situation
         if curv > 0.15:
-            # CURVES: Use pure pursuit
-            gain = 1.3
+            gain = 1.3  # Aggressive in curves
             path_steer = err * gain
         else:
-            # STRAIGHTS: Use gap following (center between walls)
-            # Steer towards the side with more space
-            gap_err = (left_min - right_min) * 0.5  # Positive = more space on left
-            path_steer = gap_err  # Steer towards bigger gap
+            # STRAIGHTS: Speed-aware + anti-oscillation
+            # Bigger dead zone, gentler corrections
+            dead_zone = np.radians(10)  # 10 degree dead zone
+            
+            if abs(err) < dead_zone:
+                path_steer = 0.0
+            else:
+                # Very gentle gain on straights
+                gain = 0.3
+                path_steer = err * gain
+                
+                # ANTI-OSCILLATION: If about to change direction, reduce!
+                if self.last_steer * path_steer < 0:  # Opposite signs = direction change
+                    path_steer *= 0.3  # Reduce by 70%!
         
         # TIGHT CORNER LOGIC: If front wall is close, turn HARD!
         # Proportional: closer wall = sharper turn!
@@ -822,6 +831,13 @@ Visualization Manager:
                 path_steer = max(path_steer, force_steer)  # Force left
             else:
                 path_steer = min(path_steer, -force_steer)  # Force right
+        
+        # SIDE WALL in curve: steer away!
+        if curv > 0.1 and min(left_min, right_min) < 0.4:
+            if left_min < right_min:
+                path_steer = min(path_steer, -0.4)  # Force right
+            else:
+                path_steer = max(path_steer, 0.4)  # Force left
         
         # ===== 6. WALL AVOIDANCE STEERING =====
         wall_steer = 0.0
