@@ -524,8 +524,8 @@ Visualization Manager:
         y_new = np.interp(new_dists, cumulative_dist, path[:,1])
         
         # Smooth to spread out sharp turns (bigger window = gentler curves)
-        x_new = uniform_filter1d(x_new, size=25, mode='wrap')
-        y_new = uniform_filter1d(y_new, size=25, mode='wrap')
+        x_new = uniform_filter1d(x_new, size=21.5, mode='wrap')
+        y_new = uniform_filter1d(y_new, size=21.5, mode='wrap')
         
         return np.column_stack((x_new, y_new))
     
@@ -809,23 +809,25 @@ Visualization Manager:
         
         # STEERING GAIN: Based on situation
         if curv > 0.15:
-            gain = 1.3  # Aggressive in curves
+            gain = 1.6  # MORE aggressive in curves (was 1.3)
             path_steer = err * gain
         else:
-            # STRAIGHTS: Speed-aware + anti-oscillation
-            # Bigger dead zone, gentler corrections
-            dead_zone = np.radians(10)  # 10 degree dead zone
+            # STRAIGHTS: Dead zone BUT override if wall ahead!
+            dead_zone = np.radians(10)
             
-            if abs(err) < dead_zone:
+            # SAFETY: If wall ahead on straight, STEER (no dead zone)!
+            if front < 2.0 and abs(err) > np.radians(5):
+                gain = 0.5
+                path_steer = err * gain
+            elif abs(err) < dead_zone:
                 path_steer = 0.0
             else:
-                # Very gentle gain on straights
                 gain = 0.3
                 path_steer = err * gain
                 
                 # ANTI-OSCILLATION: If about to change direction, reduce!
-                if self.last_steer * path_steer < 0:  # Opposite signs = direction change
-                    path_steer *= 0.3  # Reduce by 70%!
+                if self.last_steer * path_steer < 0:
+                    path_steer *= 0.3
         
         # TIGHT CORNER LOGIC: If front wall is close, turn HARD!
         # Proportional: closer wall = sharper turn!
