@@ -750,7 +750,7 @@ Visualization Manager:
             curv = self.curvatures[closest]
             max_curv = 0.25
             curv_factor = min(curv / max_curv, 1.0)
-            # Straights: 18, Tight turns: 8 (closer = won't hit wall)
+            # Straights: 18, Tight turns: 8
             lookahead = int(18 - 10 * curv_factor)  # 18 → 8
             lookahead = max(lookahead, 6)
         else:
@@ -803,30 +803,34 @@ Visualization Manager:
         if err > np.pi: err -= 2*np.pi
         if err < -np.pi: err += 2*np.pi
         
-        # STEERING GAIN: Based on situation
+        # STEERING STRATEGY: Pure pursuit in curves, GAP FOLLOW on straights!
         if curv > 0.15:
-            gain = 1.3  # Aggressive in curves
+            # CURVES: Use pure pursuit
+            gain = 1.3
+            path_steer = err * gain
         else:
-            gain = 0.5  # VERY gentle on straights - no oscillation!
-        
-        path_steer = err * gain
+            # STRAIGHTS: Use gap following (center between walls)
+            # Steer towards the side with more space
+            gap_err = (left_min - right_min) * 0.5  # Positive = more space on left
+            path_steer = gap_err  # Steer towards bigger gap
         
         # TIGHT CORNER LOGIC: If front wall is close, turn HARD!
-        if front < 1.0 and curv > 0.1:
-            # Emergency: wall ahead in a curve - maximize turn!
+        # Proportional: closer wall = sharper turn!
+        if front < 1.4 and curv > 0.1:
+            force_steer = 0.4 + (1.4 - front) * 0.25  # 0.4 at 1.4m, 0.75 at 0m
             if err > 0:
-                path_steer = max(path_steer, 0.5)  # Force left
+                path_steer = max(path_steer, force_steer)  # Force left
             else:
-                path_steer = min(path_steer, -0.5)  # Force right
+                path_steer = min(path_steer, -force_steer)  # Force right
         
         # ===== 6. WALL AVOIDANCE STEERING =====
         wall_steer = 0.0
         wall_thresh = 0.5  # Start avoiding at 50cm
         
         if left_min < wall_thresh:
-            wall_steer -= (wall_thresh - left_min) * 2.5  # Steer right (stronger!)
+            wall_steer -= (wall_thresh - left_min) * 2.5  # Steer right
         if right_min < wall_thresh:
-            wall_steer += (wall_thresh - right_min) * 2.5  # Steer left (stronger!)
+            wall_steer += (wall_thresh - right_min) * 2.5  # Steer left
         
         # Front wall - AGGRESSIVE turn to avoid!
         if front < 0.6:
@@ -849,7 +853,7 @@ Visualization Manager:
         
         # DAMPING: Minimal in curves, VERY HEAVY on straights
         if curv > 0.15:  # In a curve - need to turn!
-            damping = 0.09
+            damping = 0.1
         else:  # Straight - VERY HEAVY damping to kill oscillation
             damping = 0.75
         
