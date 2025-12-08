@@ -524,8 +524,8 @@ Visualization Manager:
         y_new = np.interp(new_dists, cumulative_dist, path[:,1])
         
         # Smooth to spread out sharp turns (bigger window = gentler curves)
-        x_new = uniform_filter1d(x_new, size=20, mode='wrap')
-        y_new = uniform_filter1d(y_new, size=20, mode='wrap')
+        x_new = uniform_filter1d(x_new, size=21, mode='wrap')
+        y_new = uniform_filter1d(y_new, size=21, mode='wrap')
         
         return np.column_stack((x_new, y_new))
     
